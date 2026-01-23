@@ -1,0 +1,6 @@
+PyQt6
+Pillow
+pytest
+pytest-qt
+rembg
+onnxruntime
