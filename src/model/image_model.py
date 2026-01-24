@@ -9,6 +9,9 @@ the Free Software Foundation, either version 3 of the License, or
 """
 
 from PIL import Image, ImageEnhance, ImageQt, ImageDraw
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ImageModel:
     """Handles Image Processing using Pillow."""
@@ -41,8 +44,10 @@ class ImageModel:
             self.history.clear()
             self.redo_stack.clear()
             self.push_state("Load Image")
+            logger.info(f"Image loaded successfully: {filepath}")
             return True
         except Exception as e:
+            logger.error(f"Error loading image {filepath}: {e}")
             print(f"Error loading image: {e}")
             return False
 
@@ -110,6 +115,7 @@ class ImageModel:
                 return canvas_img.save(filepath)
 
             except Exception as e:
+                logger.error(f"Error saving image to {filepath}: {e}")
                 print(f"Error saving image: {e}")
                 return False
         return False
@@ -137,6 +143,8 @@ class ImageModel:
             self.history.pop(0)
         
         self.redo_stack.clear()
+        
+        # logger.debug(f"State pushed: {description}") # Optional debug log
 
     def undo(self):
         if len(self.history) > 1:

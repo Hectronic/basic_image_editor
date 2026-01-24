@@ -114,8 +114,21 @@ class StartPageWidget(QWidget):
 
     def on_recent_clicked(self, item):
         path = item.data(Qt.ItemDataRole.UserRole)
+        # Import logger locally or at top level if frequent
+        import logging
+        import os
+        from PyQt6.QtWidgets import QMessageBox
+
+        logger = logging.getLogger(__name__)
+
         if path:
-            self.file_opened.emit(path)
+            if os.path.exists(path):
+                self.file_opened.emit(path)
+            else:
+                logger.warning(f"Recent file not found: {path}")
+                QMessageBox.warning(self, "File Not Found", f"The file '{path}' no longer exists.")
+                # Optional: Remove from list?
+                # For now just alert and log.
 
     def add_recent(self, path):
         from PyQt6.QtWidgets import QListWidgetItem

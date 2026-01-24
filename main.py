@@ -15,8 +15,10 @@ from PyQt6.QtWidgets import QApplication
 from PyQt6.QtCore import Qt
 
 from src.ui.main_window import ImageEditorApp
+from src.utils.logger import setup_logging
 
 def main():
+    setup_logging()
     # High DPI scaling
     if hasattr(Qt.HighDpiScaleFactorRoundingPolicy, 'PassThrough'):
         QApplication.setHighDpiScaleFactorRoundingPolicy(

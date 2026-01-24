@@ -12,7 +12,11 @@ import io
 from PyQt6.QtCore import QThread, pyqtSignal
 from PIL import Image
 import rembg
+import rembg
 import numpy as np
+import logging
+
+logger = logging.getLogger(__name__)
 
 class BackgroundRemoverWorker(QThread):
     finished = pyqtSignal(object) # Emit PIL Image
@@ -29,4 +33,5 @@ class BackgroundRemoverWorker(QThread):
             output_image = rembg.remove(self.image)
             self.finished.emit(output_image)
         except Exception as e:
+            logger.error(f"Error in background removal worker: {e}", exc_info=True)
             self.error.emit(str(e))
