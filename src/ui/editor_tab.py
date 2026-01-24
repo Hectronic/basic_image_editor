@@ -12,6 +12,9 @@ from PyQt6.QtWidgets import QWidget, QVBoxLayout
 from PyQt6.QtCore import pyqtSignal
 from src.model.image_model import ImageModel
 from src.ui.canvas_widget import CanvasWidget
+import logging
+
+logger = logging.getLogger(__name__)
 
 class EditorTab(QWidget):
     """
@@ -42,6 +45,7 @@ class EditorTab(QWidget):
             self.canvas.shape_added = self.on_shape_added
             self.canvas.shape_updated = self.on_shape_updated
             return True
+        logger.error(f"Failed to load image in EditorTab: {filepath}")
         return False
         
     def save_image(self, filepath):
@@ -139,16 +143,20 @@ class EditorTab(QWidget):
         self.worker = BackgroundRemoverWorker(self.model.original_image.copy())
         self.worker.finished.connect(self.on_bg_removed)
         self.worker.error.connect(self.on_bg_error)
+        self.worker.error.connect(self.on_bg_error)
         self.worker.start()
+        logger.info("Background removal started.")
     
     def on_bg_removed(self, new_image):
         self.progress.close()
         self.model.set_new_image(new_image, "Remove Background")
         self.update_canvas()
         self.history_updated.emit()
+        logger.info("Background removal completed successfully.")
     
     def on_bg_error(self, error_msg):
         self.progress.close()
+        logger.error(f"Background removal failed: {error_msg}")
         from PyQt6.QtWidgets import QMessageBox
         QMessageBox.critical(self, "Error", f"Failed to remove background:\n{error_msg}")
 

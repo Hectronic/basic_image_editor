@@ -20,6 +20,9 @@ from src.ui.editor_tab import EditorTab
 from src.ui.start_page import StartPageWidget
 
 import os
+import logging
+
+logger = logging.getLogger(__name__)
 
 class ImageEditorApp(QMainWindow):
     def __init__(self):
@@ -58,6 +61,8 @@ class ImageEditorApp(QMainWindow):
         
         # Open Start Page
         self.open_start_page()
+
+        logger.info("Application started, main window initialized.")
 
     def setup_ui(self):
         # Toolbar
@@ -381,6 +386,7 @@ class ImageEditorApp(QMainWindow):
         )
         if file_path:
             self.create_editor_tab(file_path)
+            logger.info(f"Opened image: {file_path}")
 
     def handle_file_opened(self, path):
          if not path:
@@ -425,7 +431,8 @@ class ImageEditorApp(QMainWindow):
             try:
                 with open(recents_path, 'r') as f:
                     return json.load(f)
-            except:
+            except Exception as e:
+                logger.warning(f"Failed to load recent files: {e}")
                 return []
         return []
 
@@ -435,7 +442,8 @@ class ImageEditorApp(QMainWindow):
         try:
              with open(recents_path, 'w') as f:
                 json.dump(self.recent_files, f)
-        except:
+        except Exception as e:
+            logger.warning(f"Failed to save recent files: {e}")
             pass
 
     def close_tab(self, index):
@@ -511,8 +519,10 @@ class ImageEditorApp(QMainWindow):
             )
             if file_path:
                 if current.save_image(file_path):
+                    logger.info(f"Saved image to: {file_path}")
                     QMessageBox.information(self, "Success", "Image saved successfully.")
                 else:
+                    logger.error(f"Failed to save image to: {file_path}")
                     QMessageBox.warning(self, "Error", "Failed to save image.")
 
     def undo_action(self):
