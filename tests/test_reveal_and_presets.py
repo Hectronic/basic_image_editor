@@ -65,6 +65,11 @@ def test_pil_float_roundtrip(synthetic_rgb_float):
     assert alpha is not None
     assert np.allclose(rgb_f, synthetic_rgb_float, atol=1.0 / 255.0 + 1e-3)
 
+    # Roundtrip with explicit non-opaque alpha
+    custom_alpha = np.full(synthetic_rgb_float.shape[:2], 0.5, dtype=np.float32)
+    pil_semi = float_to_pil(synthetic_rgb_float, custom_alpha)
+    assert pil_semi.mode == "RGBA"
+
     pil_rgb = pil_rgba.convert("RGB")
     rgb_f2, alpha2 = pil_to_float(pil_rgb)
     assert alpha2 is None
@@ -96,10 +101,17 @@ def test_denoise_sharpen_and_develop(synthetic_rgb_float):
     assert dn.shape == synthetic_rgb_float.shape
     assert np.all((dn >= 0.0) & (dn <= 1.0))
 
-    # Zero-strength branches
+    # Zero-strength branches & large (>256px) multiscale branches
     assert np.allclose(denoise_ultra_clean(synthetic_rgb_float, 0.0, 0.0), synthetic_rgb_float)
     assert np.allclose(sharpen_hd_modern(synthetic_rgb_float, 0.0), synthetic_rgb_float)
     assert np.allclose(apply_s_curve_luminance(synthetic_rgb_float, 0.0), synthetic_rgb_float)
+    assert apply_s_curve_luminance(synthetic_rgb_float, 0.2).shape == synthetic_rgb_float.shape
+
+    large_rgb = np.full((300, 300, 3), 0.5, dtype=np.float32)
+    assert denoise_ultra_clean(large_rgb, 10.0, 3.0).shape == (300, 300, 3)
+    assert apply_preset(large_rgb, "cinestill_800t", 1.0).shape == (300, 300, 3)
+    from src.processing.raw_developer import build_gamma_s_curve_lut
+    assert build_gamma_s_curve_lut(gamma=0.9, gain=1.1, s_contrast=0.1, highlight_rolloff=0.1).shape == (256,)
 
     sh = sharpen_hd_modern(synthetic_rgb_float, strength=0.4)
     assert sh.shape == synthetic_rgb_float.shape

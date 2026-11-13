@@ -50,6 +50,7 @@ class PresetGalleryDock(QDockWidget):
 
         self.current_preset_id = "none"
         self._updating_ui = False
+        self._last_thumb_img_id = None
 
         container = QWidget()
         layout = QVBoxLayout(container)
@@ -132,13 +133,20 @@ class PresetGalleryDock(QDockWidget):
         self._updating_ui = False
 
     def update_thumbnails(self, base_rgb_float: np.ndarray | None):
-        """Renders live preview thumbnails for every preset using the current image."""
+        """Renders live preview thumbnails for every preset using a single 96x64 downsample."""
         if base_rgb_float is None:
             return
+        img_id = id(base_rgb_float)
+        if self._last_thumb_img_id == img_id:
+            return
+        self._last_thumb_img_id = img_id
+
+        import cv2
+        small_f = cv2.resize(base_rgb_float, (96, 64), interpolation=cv2.INTER_AREA)
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             preset_id = item.data(Qt.ItemDataRole.UserRole)
-            thumb_u8 = generate_preset_thumbnail(base_rgb_float, preset_id, size=(96, 64))
+            thumb_u8 = generate_preset_thumbnail(small_f, preset_id, size=(96, 64))
             h, w, _ = thumb_u8.shape
             qimg = QImage(thumb_u8.data, w, h, w * 3, QImage.Format.Format_RGB888)
             item.setIcon(QIcon(QPixmap.fromImage(qimg.copy())))

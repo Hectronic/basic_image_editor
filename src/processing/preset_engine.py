@@ -1,5 +1,5 @@
 """
-Basic Image Editor - Curated Photographic Preset Engine
+Basic Image Editor - Curated Photographic Preset Engine (SIMD / LUT Accelerated)
 Copyright (C) 2026 Héctor Álvarez López hectoralvarez.me
 
 This program is free software: you can redistribute it and/or modify
@@ -13,7 +13,8 @@ import cv2
 import numpy as np
 
 from src.processing.raw_developer import (
-    apply_s_curve_luminance,
+    apply_lut_curve_float,
+    build_gamma_s_curve_lut,
     protect_gamut_and_highlights,
     sharpen_hd_modern,
 )
@@ -133,6 +134,33 @@ PRESET_DEFINITIONS = OrderedDict(
     ]
 )
 
+# Precomputed 256-entry RGB split-toning & curve LUTs for ultra-fast preset grading
+_X256 = np.linspace(0.0, 1.0, 256, dtype=np.float32)
+
+# Precompute Hue (0..255) blue boost LUT for Electric Chroma
+_HUE_IDX = np.arange(256, dtype=np.float32)
+_BLUE_HUE_WEIGHT_LUT = np.exp(-0.5 * ((_HUE_IDX - 112.0) / 22.0) ** 2).astype(np.float32)
+
+
+def _apply_3channel_lut_float(
+    img_float: np.ndarray,
+    lut_r: np.ndarray,
+    lut_g: np.ndarray,
+    lut_b: np.ndarray,
+) -> np.ndarray:
+    """Applies independent R, G, B 256-entry float32 [0, 1] LUTs in a single OpenCV pass."""
+    u8 = np.clip(img_float * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8)
+    lut_rgb = np.stack(
+        [
+            np.clip(lut_r * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8),
+            np.clip(lut_g * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8),
+            np.clip(lut_b * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8),
+        ],
+        axis=-1,
+    ).reshape(256, 1, 3)
+    out_u8 = cv2.LUT(u8, lut_rgb)
+    return out_u8.astype(np.float32) * (1.0 / 255.0)
+
 
 def get_preset_names() -> list[str]:
     """Returns ordered list of available preset IDs."""
@@ -145,112 +173,111 @@ def get_preset_metadata(preset_id: str) -> dict:
 
 
 def _grade_electric_chroma_hd(img: np.ndarray) -> np.ndarray:
-    out = np.clip(img, 0.0, 1.0).copy()
-    # Lift midtones slightly & apply crisp S-curve
-    out = np.power(out, 0.93)
-    out = apply_s_curve_luminance(out, contrast_strength=0.22)
+    # 1. Combined gamma + S-curve + split-toning + soft-knee in a single 3-channel LUT!
+    base_curve = build_gamma_s_curve_lut(gamma=0.93, s_contrast=0.22, highlight_rolloff=0.16)
+    sh_w = (1.0 - base_curve) ** 1.8
+    hi_w = base_curve ** 1.6
 
-    # Split-toning: deep sapphire/indigo shadows & warm golden highlights
-    luma = (0.299 * out[..., 0] + 0.587 * out[..., 1] + 0.114 * out[..., 2])[..., np.newaxis]
-    shadow_w = np.power(1.0 - luma, 1.8)
-    high_w = np.power(luma, 1.6)
+    lut_r = np.clip(base_curve - 0.035 * sh_w + 0.045 * hi_w, 0.0, 1.0)
+    lut_g = np.clip(base_curve - 0.010 * sh_w + 0.020 * hi_w, 0.0, 1.0)
+    lut_b = np.clip(base_curve + 0.055 * sh_w - 0.030 * hi_w, 0.0, 1.0)
+    out = _apply_3channel_lut_float(img, lut_r, lut_g, lut_b)
 
-    out[..., 0] = out[..., 0] - 0.035 * shadow_w[..., 0] + 0.045 * high_w[..., 0]
-    out[..., 1] = out[..., 1] - 0.010 * shadow_w[..., 0] + 0.020 * high_w[..., 0]
-    out[..., 2] = out[..., 2] + 0.055 * shadow_w[..., 0] - 0.030 * high_w[..., 0]
+    # 2. Fast HSV saturation & sapphire blue boost using 1D Hue LUT
+    u8 = np.clip(out * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8)
+    hsv = cv2.cvtColor(u8, cv2.COLOR_RGB2HSV)
+    h_u8, s_u8, v_u8 = cv2.split(hsv)
 
-    # Harmonic saturation boost in HSV with skin/red protection
-    u8 = (np.clip(out, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
-    hsv = cv2.cvtColor(u8, cv2.COLOR_RGB2HSV).astype(np.float32)
-    h, s, v = hsv[..., 0], hsv[..., 1] / 255.0, hsv[..., 2] / 255.0
+    blue_w = cv2.LUT(h_u8, _BLUE_HUE_WEIGHT_LUT)
+    s_f = s_u8.astype(np.float32) * (1.24 + 0.12 * blue_w)
+    s_new = np.clip(s_f, 0.0, 255.0).astype(np.uint8)
+    v_f = v_u8.astype(np.float32) * (1.0 - 0.05 * blue_w * (s_new.astype(np.float32) * (1.0 / 255.0)))
+    v_new = np.clip(v_f, 0.0, 255.0).astype(np.uint8)
 
-    # Blues/cyans (hue ~ 90..135 in OpenCV 0..180 scale) get deeper richness
-    blue_mask = np.exp(-0.5 * ((h - 112.0) / 22.0) ** 2)
-    sat_boost = 1.24 + 0.12 * blue_mask
-    s = np.clip(s * sat_boost, 0.0, 1.0)
-    v = np.clip(v * (1.0 - 0.05 * blue_mask * s), 0.0, 1.0)
+    out_u8 = cv2.cvtColor(cv2.merge([h_u8, s_new, v_new]), cv2.COLOR_HSV2RGB)
+    out = out_u8.astype(np.float32) * (1.0 / 255.0)
 
-    hsv[..., 1] = s * 255.0
-    hsv[..., 2] = v * 255.0
-    out = cv2.cvtColor(hsv.astype(np.uint8), cv2.COLOR_HSV2RGB).astype(np.float32) / 255.0
-
-    out = protect_gamut_and_highlights(out, red_tame=0.18, highlight_rolloff=0.16)
+    out = protect_gamut_and_highlights(out, red_tame=0.18, highlight_rolloff=0.0)
     return sharpen_hd_modern(out, strength=0.35)
 
 
+def _saturation_matrix(sat: float) -> np.ndarray:
+    """Builds a 3x3 luminance-preserving saturation matrix for fast cv2.transform."""
+    w_r, w_g, w_b = 0.299, 0.587, 0.114
+    s = float(sat)
+    return np.array(
+        [
+            [(1.0 - s) * w_r + s, (1.0 - s) * w_g, (1.0 - s) * w_b],
+            [(1.0 - s) * w_r, (1.0 - s) * w_g + s, (1.0 - s) * w_b],
+            [(1.0 - s) * w_r, (1.0 - s) * w_g, (1.0 - s) * w_b + s],
+        ],
+        dtype=np.float32,
+    )
+
+
+_MODERNA_SAT_MAT = _saturation_matrix(1.16)
+_EDITORIAL_SAT_MAT = _saturation_matrix(1.12)
+
+
 def _grade_moderna_definida_hd(img: np.ndarray) -> np.ndarray:
-    out = np.clip(img, 0.0, 1.0).copy()
-    out = np.power(out, 0.95)
-    out = apply_s_curve_luminance(out, contrast_strength=0.18)
-
-    # Local micro-contrast (clarity) on luminance
-    luma = 0.299 * out[..., 0] + 0.587 * out[..., 1] + 0.114 * out[..., 2]
-    local_mean = cv2.GaussianBlur(luma, (0, 0), 4.0)
-    clarity = (luma - local_mean) * 0.22
-    out = np.clip(out + clarity[..., np.newaxis], 0.0, 1.0)
-
-    # Natural vibrance boost (boosts muted colors more than already-saturated ones)
-    mean_rgb = np.mean(out, axis=-1, keepdims=True)
-    sat_est = np.max(out, axis=-1, keepdims=True) - np.min(out, axis=-1, keepdims=True)
-    vibrance_weight = 1.0 + 0.22 * (1.0 - sat_est)
-    out = mean_rgb + (out - mean_rgb) * vibrance_weight
-
-    out = protect_gamut_and_highlights(out, red_tame=0.14, highlight_rolloff=0.14)
+    lut = build_gamma_s_curve_lut(gamma=0.95, s_contrast=0.22, highlight_rolloff=0.14)
+    out = apply_lut_curve_float(img, lut)
+    out = np.clip(cv2.transform(out, _MODERNA_SAT_MAT), 0.0, 1.0)
+    out = protect_gamut_and_highlights(out, red_tame=0.14, highlight_rolloff=0.0)
     return sharpen_hd_modern(out, strength=0.44)
 
 
 def _grade_editorial_viva_hd(img: np.ndarray) -> np.ndarray:
-    out = np.clip(img, 0.0, 1.0).copy()
-    # Gentle shadow & midtone lift for flattering skin tones
-    out = np.power(out, 0.91)
-    luma = (0.299 * out[..., 0] + 0.587 * out[..., 1] + 0.114 * out[..., 2])[..., np.newaxis]
-    shadow_lift = 0.14 * np.power(1.0 - luma, 2.0) * (1.0 - out)
-    out = np.clip(out + shadow_lift, 0.0, 1.0)
+    # Combine gamma 0.91 + shadow lift + warm golden balance + S-curve in 3-channel LUT!
+    x = np.power(_X256, 0.91)
+    x = np.clip(x + 0.14 * ((1.0 - x) ** 2) * (1.0 - x), 0.0, 1.0)
 
-    # Warm golden editorial balance
-    out[..., 0] *= 1.035
-    out[..., 1] *= 1.010
-    out[..., 2] *= 0.965
+    def _s_and_knee(c):
+        c = np.clip(c, 0.0, 1.0)
+        c = c - 0.14 * 0.22 * np.sin(2.0 * np.pi * c)
+        knee = 0.78
+        above = np.maximum(0.0, c - knee)
+        c = np.where(c > knee, knee + above / (1.0 + 0.16 * 3.5 * (above / 0.22)), c)
+        return np.clip(c, 0.0, 1.0).astype(np.float32)
 
-    out = apply_s_curve_luminance(np.clip(out, 0.0, 1.0), contrast_strength=0.14)
-
-    # Balanced vibrance
-    mean_rgb = np.mean(out, axis=-1, keepdims=True)
-    sat_est = np.max(out, axis=-1, keepdims=True) - np.min(out, axis=-1, keepdims=True)
-    out = mean_rgb + (out - mean_rgb) * (1.0 + 0.18 * (1.0 - sat_est))
-
-    out = protect_gamut_and_highlights(out, red_tame=0.18, highlight_rolloff=0.16)
+    lut_r = _s_and_knee(x * 1.035)
+    lut_g = _s_and_knee(x * 1.010)
+    lut_b = _s_and_knee(x * 0.965)
+    out = _apply_3channel_lut_float(img, lut_r, lut_g, lut_b)
+    out = np.clip(cv2.transform(out, _EDITORIAL_SAT_MAT), 0.0, 1.0)
+    out = protect_gamut_and_highlights(out, red_tame=0.18, highlight_rolloff=0.0)
     return sharpen_hd_modern(out, strength=0.30)
 
 
+_KODACHROME_MATRIX = np.array(
+    [
+        [1.06, 0.02, -0.03],
+        [0.01, 1.01, -0.01],
+        [-0.02, 0.03, 0.95],
+    ],
+    dtype=np.float32,
+)
+
+
 def _grade_kodachrome_64(img: np.ndarray) -> np.ndarray:
-    out = np.clip(img, 0.0, 1.0).copy()
-    out = np.power(out, 0.94)
-    out = apply_s_curve_luminance(out, contrast_strength=0.24)
-
-    # Characteristic Kodachrome color matrix: warm amber/reds, deep teal-blue skies
-    r, g, b = out[..., 0], out[..., 1], out[..., 2]
-    new_r = 1.06 * r + 0.02 * g - 0.03 * b
-    new_g = 0.01 * r + 1.01 * g - 0.01 * b
-    new_b = -0.02 * r + 0.03 * g + 0.95 * b
-    out = np.stack([new_r, new_g, new_b], axis=-1)
-
-    out = protect_gamut_and_highlights(out, red_tame=0.16, highlight_rolloff=0.15)
+    lut = build_gamma_s_curve_lut(gamma=0.94, s_contrast=0.24, highlight_rolloff=0.15)
+    out = apply_lut_curve_float(img, lut)
+    out = cv2.transform(out, _KODACHROME_MATRIX)
+    out = np.clip(out, 0.0, 1.0)
+    out = protect_gamut_and_highlights(out, red_tame=0.16, highlight_rolloff=0.0)
     return sharpen_hd_modern(out, strength=0.32)
 
 
 def _grade_blancoynegro_platino_hd(img: np.ndarray) -> np.ndarray:
-    out = np.clip(img, 0.0, 1.0).copy()
-    # Warm panchromatic filter weights (flattering on skin and dramatic on skies)
-    luma = 0.36 * out[..., 0] + 0.53 * out[..., 1] + 0.11 * out[..., 2]
-    luma = np.power(np.clip(luma, 0.0, 1.0), 0.93)
-    luma = apply_s_curve_luminance(luma, contrast_strength=0.25)
+    luma = 0.36 * img[..., 0] + 0.53 * img[..., 1] + 0.11 * img[..., 2]
+    lut = build_gamma_s_curve_lut(gamma=0.93, s_contrast=0.25)
+    luma_u8 = np.clip(luma * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8)
+    lut_u8 = np.clip(lut * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8)
+    luma = cv2.LUT(luma_u8, lut_u8).astype(np.float32) * (1.0 / 255.0)
 
-    # Local micro-contrast
-    local_mean = cv2.GaussianBlur(luma, (0, 0), 4.5)
+    local_mean = cv2.GaussianBlur(luma, (0, 0), 3.5)
     luma = np.clip(luma + (luma - local_mean) * 0.24, 0.0, 1.0)
 
-    # Subtle platinum-palladium toning (cool-warm metallic neutrality)
     r = np.clip(luma * 1.008, 0.0, 1.0)
     g = np.clip(luma * 1.002, 0.0, 1.0)
     b = np.clip(luma * 0.990 + 0.008 * (1.0 - luma), 0.0, 1.0)
@@ -259,37 +286,40 @@ def _grade_blancoynegro_platino_hd(img: np.ndarray) -> np.ndarray:
 
 
 def _grade_cinestill_800t(img: np.ndarray) -> np.ndarray:
-    out = np.clip(img, 0.0, 1.0).copy()
-    out = np.power(out, 0.94)
+    base = build_gamma_s_curve_lut(gamma=0.94, s_contrast=0.20, highlight_rolloff=0.16)
+    sh_w = (1.0 - base) ** 1.5
+    lut_r = np.clip(base - 0.040 * sh_w, 0.0, 1.0)
+    lut_g = np.clip(base + 0.015 * sh_w, 0.0, 1.0)
+    lut_b = np.clip(base + 0.055 * sh_w, 0.0, 1.0)
+    out = _apply_3channel_lut_float(img, lut_r, lut_g, lut_b)
 
-    # Tungsten cool-teal shadows + warm highlights
+    # Fast halation glow computed at 1/4 resolution then upsampled!
+    h, w, _ = out.shape
     luma = 0.299 * out[..., 0] + 0.587 * out[..., 1] + 0.114 * out[..., 2]
-    shadow_w = np.power(1.0 - luma, 1.5)
-    out[..., 0] -= 0.04 * shadow_w
-    out[..., 1] += 0.015 * shadow_w
-    out[..., 2] += 0.055 * shadow_w
+    bright_mask = np.clip((luma - 0.72) * (1.0 / 0.28), 0.0, 1.0)
+    if max(h, w) > 256:
+        gw, gh = max(1, w // 4), max(1, h // 4)
+        bm_small = cv2.resize(bright_mask, (gw, gh), interpolation=cv2.INTER_AREA)
+        glow_small = cv2.GaussianBlur(bm_small, (0, 0), 2.0)
+        glow = cv2.resize(glow_small, (w, h), interpolation=cv2.INTER_LINEAR)
+    else:
+        glow = cv2.GaussianBlur(bright_mask, (0, 0), 4.0)
 
-    # Warm red-orange halation glow around bright light sources
-    bright_mask = np.clip((luma - 0.72) / 0.28, 0.0, 1.0)
-    glow = cv2.GaussianBlur(bright_mask, (0, 0), 6.0)
     out[..., 0] += glow * 0.18
     out[..., 1] += glow * 0.05
     out[..., 2] -= glow * 0.02
 
-    out = apply_s_curve_luminance(np.clip(out, 0.0, 1.0), contrast_strength=0.20)
-    out = protect_gamut_and_highlights(out, red_tame=0.14, highlight_rolloff=0.16)
+    out = protect_gamut_and_highlights(np.clip(out, 0.0, 1.0), red_tame=0.14, highlight_rolloff=0.0)
     return sharpen_hd_modern(out, strength=0.30)
 
 
 def _grade_selectivo_platino_hd(img: np.ndarray) -> np.ndarray:
-    out = np.clip(img, 0.0, 1.0).copy()
-    bw = _grade_blancoynegro_platino_hd(out)
-    vibrant = _grade_electric_chroma_hd(out)
+    bw = _grade_blancoynegro_platino_hd(img)
+    vibrant = _grade_electric_chroma_hd(img)
 
-    # Detect warm/red/orange/gold hues + strong chromaticity
-    r, g, b = out[..., 0], out[..., 1], out[..., 2]
+    r, g, b = img[..., 0], img[..., 1], img[..., 2]
     warm_dominance = np.clip((r - 0.55 * g - 0.45 * b) * 3.2, 0.0, 1.0)
-    mask = cv2.GaussianBlur(warm_dominance, (0, 0), 2.0)[..., np.newaxis]
+    mask = cv2.GaussianBlur(warm_dominance, (5, 5), 1.5)[..., np.newaxis]
     mask = np.clip(mask * 1.35, 0.0, 1.0)
     return np.clip(bw * (1.0 - mask) + vibrant * mask, 0.0, 1.0)
 
@@ -322,7 +352,7 @@ def apply_preset(
     graded = _PRESET_FUNCTIONS[preset_id](base)
     if intensity >= 0.999:
         return graded
-    return np.clip(base * (1.0 - intensity) + graded * intensity, 0.0, 1.0)
+    return cv2.addWeighted(base, 1.0 - intensity, graded, intensity, 0.0)
 
 
 def generate_preset_thumbnail(
@@ -331,12 +361,14 @@ def generate_preset_thumbnail(
     size: tuple[int, int] = (112, 76),
 ) -> np.ndarray:
     """
-    Downsamples `img_float` and renders a fast preview thumbnail (uint8 RGB)
-    with `preset_id` applied.
+    Downsamples `img_float` (if not already at target `size`) and renders a fast
+    preview thumbnail (uint8 RGB) with `preset_id` applied.
     """
     target_w, target_h = size
-    u8 = (np.clip(img_float, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
-    small_u8 = cv2.resize(u8, (target_w, target_h), interpolation=cv2.INTER_AREA)
-    small_f = small_u8.astype(np.float32) / 255.0
+    h, w, _ = img_float.shape
+    if w == target_w and h == target_h:
+        small_f = img_float
+    else:
+        small_f = cv2.resize(img_float, (target_w, target_h), interpolation=cv2.INTER_AREA)
     graded_f = apply_preset(small_f, preset_id, intensity=1.0)
-    return (np.clip(graded_f, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+    return np.clip(graded_f * 255.0 + 0.5, 0.0, 255.0).astype(np.uint8)
