@@ -1,5 +1,8 @@
 PyQt6
 Pillow
+numpy
+opencv-python
+rawpy
 pytest
 pytest-qt
 rembg

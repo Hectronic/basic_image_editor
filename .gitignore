@@ -25,4 +25,4 @@ build/
 .pytest_cache
 
 # Logs
-log/
+log/.coverage

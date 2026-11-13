@@ -9,47 +9,62 @@ the Free Software Foundation, either version 3 of the License, or
 """
 
 from PyQt6.QtWidgets import (
-    QMainWindow, QWidget, QVBoxLayout, QToolBar, QFileDialog, QLabel, QSlider, 
-    QPushButton, QDockWidget, QMessageBox, QListWidget, QApplication, QTabWidget,
-    QScrollArea, QTabBar
+    QMainWindow,
+    QWidget,
+    QVBoxLayout,
+    QToolBar,
+    QFileDialog,
+    QLabel,
+    QSlider,
+    QPushButton,
+    QDockWidget,
+    QMessageBox,
+    QListWidget,
+    QApplication,
+    QTabWidget,
+    QScrollArea,
+    QTabBar,
 )
 from PyQt6.QtCore import Qt, QSize
 from PyQt6.QtGui import QAction, QIcon, QPalette, QColor
 
 from src.ui.editor_tab import EditorTab
 from src.ui.start_page import StartPageWidget
+from src.ui.preset_gallery_dock import PresetGalleryDock
+from src.ui.assistant_dock import RevealAssistantDock
 
 import os
 import logging
 
 logger = logging.getLogger(__name__)
 
+
 class ImageEditorApp(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("Basic Image Editor")
-        
-        # Set Window Icon
-        import os
+        self.setWindowTitle("Basic Image Editor — RAW & Preset Studio")
+
         logo_path = os.path.abspath("logo.png")
         if os.path.exists(logo_path):
             self.setWindowIcon(QIcon(logo_path))
 
-        self.resize(1100, 800)
-        
+        self.resize(1340, 860)
+
         # Tabs
         self.tabs = QTabWidget()
         self.tabs.setTabsClosable(True)
         self.tabs.tabCloseRequested.connect(self.close_tab)
         self.tabs.currentChanged.connect(self.on_tab_changed)
-        self.tabs.setStyleSheet("""
+        self.tabs.setStyleSheet(
+            """
             QTabWidget::pane { border: 0; }
             QTabBar::tab { background: #252525; color: #888888; padding: 8px 16px; margin-right: 2px; }
             QTabBar::tab:selected { background: #353535; color: white; border-top: 2px solid #2a82da; }
             QTabBar::tab:hover { background: #303030; }
-        """)
+            """
+        )
         self.setCentralWidget(self.tabs)
-        
+
         # Actions References (to enable/disable)
         self.actions = {}
 
@@ -58,7 +73,7 @@ class ImageEditorApp(QMainWindow):
         self.setup_styling()
 
         self.recent_files = self.load_recents()
-        
+
         # Open Start Page
         self.open_start_page()
 
@@ -80,7 +95,7 @@ class ImageEditorApp(QMainWindow):
         save_act.setShortcut("Ctrl+S")
         save_act.triggered.connect(self.save_image)
         toolbar.addAction(save_act)
-        self.actions['save'] = save_act
+        self.actions["save"] = save_act
 
         toolbar.addSeparator()
 
@@ -90,14 +105,14 @@ class ImageEditorApp(QMainWindow):
         undo_act.triggered.connect(self.undo_action)
         undo_act.setEnabled(False)
         toolbar.addAction(undo_act)
-        self.actions['undo'] = undo_act
+        self.actions["undo"] = undo_act
 
         redo_act = QAction(QIcon.fromTheme("edit-redo"), "Redo", self)
-        redo_act.setShortcut("Ctrl+Shift+Z") # Or Ctrl+Y
+        redo_act.setShortcut("Ctrl+Shift+Z")
         redo_act.triggered.connect(self.redo_action)
         redo_act.setEnabled(False)
         toolbar.addAction(redo_act)
-        self.actions['redo'] = redo_act
+        self.actions["redo"] = redo_act
 
         toolbar.addSeparator()
 
@@ -106,35 +121,35 @@ class ImageEditorApp(QMainWindow):
         zoom_in_act.setShortcut("Ctrl++")
         zoom_in_act.triggered.connect(lambda: self.zoom(1.1))
         toolbar.addAction(zoom_in_act)
-        self.actions['zoom_in'] = zoom_in_act
+        self.actions["zoom_in"] = zoom_in_act
 
         zoom_out_act = QAction(QIcon.fromTheme("zoom-out"), "Zoom Out", self)
         zoom_out_act.setShortcut("Ctrl+-")
         zoom_out_act.triggered.connect(lambda: self.zoom(0.9))
         toolbar.addAction(zoom_out_act)
-        self.actions['zoom_out'] = zoom_out_act
+        self.actions["zoom_out"] = zoom_out_act
 
         toolbar.addSeparator()
 
         rot_left_act = QAction(QIcon.fromTheme("object-rotate-left"), "Rotate Left", self)
         rot_left_act.triggered.connect(lambda: self.rotate_image(90))
         toolbar.addAction(rot_left_act)
-        self.actions['rotate_left'] = rot_left_act
+        self.actions["rotate_left"] = rot_left_act
 
         rot_right_act = QAction(QIcon.fromTheme("object-rotate-right"), "Rotate Right", self)
         rot_right_act.triggered.connect(lambda: self.rotate_image(-90))
         toolbar.addAction(rot_right_act)
-        self.actions['rotate_right'] = rot_right_act
+        self.actions["rotate_right"] = rot_right_act
 
         flip_h_act = QAction(QIcon.fromTheme("object-flip-horizontal"), "Flip H", self)
         flip_h_act.triggered.connect(lambda: self.flip_image(True))
         toolbar.addAction(flip_h_act)
-        self.actions['flip_h'] = flip_h_act
+        self.actions["flip_h"] = flip_h_act
 
         flip_v_act = QAction(QIcon.fromTheme("object-flip-vertical"), "Flip V", self)
         flip_v_act.triggered.connect(lambda: self.flip_image(False))
         toolbar.addAction(flip_v_act)
-        self.actions['flip_v'] = flip_v_act
+        self.actions["flip_v"] = flip_v_act
 
         toolbar.addSeparator()
 
@@ -142,82 +157,103 @@ class ImageEditorApp(QMainWindow):
         self.crop_act.setCheckable(True)
         self.crop_act.triggered.connect(self.toggle_crop)
         toolbar.addAction(self.crop_act)
-        self.actions['crop'] = self.crop_act
+        self.actions["crop"] = self.crop_act
 
-        rembg_act = QAction(QIcon.fromTheme("photo"), "Remove BG", self) # Changed to photo generic
+        rembg_act = QAction(QIcon.fromTheme("photo"), "Remove BG", self)
         if rembg_act.icon().isNull():
-             rembg_act.setIcon(QIcon.fromTheme("image-x-generic"))
+            rembg_act.setIcon(QIcon.fromTheme("image-x-generic"))
         rembg_act.triggered.connect(self.remove_background)
         toolbar.addAction(rembg_act)
-        self.actions['rembg'] = rembg_act
+        self.actions["rembg"] = rembg_act
+
+        toolbar.addSeparator()
+
+        # Smart Reveal Quick Actions in Main Toolbar
+        auto_reveal_act = QAction("✨ Auto-Revelar", self)
+        auto_reveal_act.setShortcut("Ctrl+R")
+        auto_reveal_act.setToolTip("Auto-Revelar Foto con Asistente Inteligente (Ctrl+R)")
+        auto_reveal_act.triggered.connect(lambda: self.trigger_auto_develop(True))
+        toolbar.addAction(auto_reveal_act)
+        self.actions["auto_reveal"] = auto_reveal_act
+
+        insta_crop_act = QAction("📐 Insta 1:1", self)
+        insta_crop_act.setToolTip("Encuadre cuadrado inteligente 1:1 para Instagram")
+        insta_crop_act.triggered.connect(self.trigger_smart_crop_1x1)
+        toolbar.addAction(insta_crop_act)
+        self.actions["insta_1x1"] = insta_crop_act
+
+        clean_ai_act = QAction("🛡️ Limpiar IA", self)
+        clean_ai_act.setToolTip("Eliminar marcas de agua IA / C2PA y patrón de remolino")
+        clean_ai_act.triggered.connect(self.trigger_clean_ai_watermark)
+        toolbar.addAction(clean_ai_act)
+        self.actions["clean_ai"] = clean_ai_act
 
         # --- Drawing Toolbar ---
         draw_toolbar = QToolBar("Drawing Toolbar")
         draw_toolbar.setIconSize(QSize(24, 24))
         self.addToolBar(Qt.ToolBarArea.TopToolBarArea, draw_toolbar)
-        self.addToolBarBreak(Qt.ToolBarArea.TopToolBarArea) 
+        self.addToolBarBreak(Qt.ToolBarArea.TopToolBarArea)
 
         # Pointer (Select)
-        self.select_act = QAction(QIcon.fromTheme("input-mouse"), "Select", self) # Changed icon
+        self.select_act = QAction(QIcon.fromTheme("input-mouse"), "Select", self)
         self.select_act.setCheckable(True)
-        self.select_act.setChecked(True) # Default
-        self.select_act.triggered.connect(lambda: self.set_draw_mode('SELECT_SHAPE'))
+        self.select_act.setChecked(True)
+        self.select_act.triggered.connect(lambda: self.set_draw_mode("SELECT_SHAPE"))
         draw_toolbar.addAction(self.select_act)
-        self.actions['draw_select'] = self.select_act
-        
+        self.actions["draw_select"] = self.select_act
+
         # Pen
         self.draw_pen_act = QAction(QIcon.fromTheme("draw-freehand"), "Pen", self)
         self.draw_pen_act.setCheckable(True)
-        self.draw_pen_act.triggered.connect(lambda: self.set_draw_mode('DRAW_PEN'))
+        self.draw_pen_act.triggered.connect(lambda: self.set_draw_mode("DRAW_PEN"))
         draw_toolbar.addAction(self.draw_pen_act)
-        self.actions['draw_pen'] = self.draw_pen_act
+        self.actions["draw_pen"] = self.draw_pen_act
 
         # Eraser
         self.draw_eraser_act = QAction(QIcon.fromTheme("draw-eraser"), "Eraser", self)
         if self.draw_eraser_act.icon().isNull():
-             self.draw_eraser_act.setIcon(QIcon.fromTheme("edit-clear")) # Fallback
+            self.draw_eraser_act.setIcon(QIcon.fromTheme("edit-clear"))
         self.draw_eraser_act.setCheckable(True)
-        self.draw_eraser_act.triggered.connect(lambda: self.set_draw_mode('DRAW_ERASER'))
+        self.draw_eraser_act.triggered.connect(lambda: self.set_draw_mode("DRAW_ERASER"))
         draw_toolbar.addAction(self.draw_eraser_act)
-        self.actions['draw_eraser'] = self.draw_eraser_act
+        self.actions["draw_eraser"] = self.draw_eraser_act
 
         draw_toolbar.addSeparator()
 
         # Shapes
         self.draw_line_act = QAction(QIcon.fromTheme("draw-line"), "Line", self)
         self.draw_line_act.setCheckable(True)
-        self.draw_line_act.triggered.connect(lambda: self.set_draw_mode('DRAW_LINE'))
+        self.draw_line_act.triggered.connect(lambda: self.set_draw_mode("DRAW_LINE"))
         draw_toolbar.addAction(self.draw_line_act)
-        self.actions['draw_line'] = self.draw_line_act
+        self.actions["draw_line"] = self.draw_line_act
 
         self.draw_arrow_act = QAction(QIcon.fromTheme("draw-arrow"), "Arrow", self)
         self.draw_arrow_act.setCheckable(True)
-        self.draw_arrow_act.triggered.connect(lambda: self.set_draw_mode('DRAW_ARROW'))
+        self.draw_arrow_act.triggered.connect(lambda: self.set_draw_mode("DRAW_ARROW"))
         draw_toolbar.addAction(self.draw_arrow_act)
-        self.actions['draw_arrow'] = self.draw_arrow_act
+        self.actions["draw_arrow"] = self.draw_arrow_act
 
         self.draw_rect_act = QAction(QIcon.fromTheme("draw-rectangle"), "Rect", self)
         self.draw_rect_act.setCheckable(True)
-        self.draw_rect_act.triggered.connect(lambda: self.set_draw_mode('DRAW_RECT'))
+        self.draw_rect_act.triggered.connect(lambda: self.set_draw_mode("DRAW_RECT"))
         draw_toolbar.addAction(self.draw_rect_act)
-        self.actions['draw_rect'] = self.draw_rect_act
+        self.actions["draw_rect"] = self.draw_rect_act
 
         self.draw_ellipse_act = QAction(QIcon.fromTheme("draw-ellipse"), "Circle", self)
         self.draw_ellipse_act.setCheckable(True)
-        self.draw_ellipse_act.triggered.connect(lambda: self.set_draw_mode('DRAW_ELLIPSE'))
+        self.draw_ellipse_act.triggered.connect(lambda: self.set_draw_mode("DRAW_ELLIPSE"))
         draw_toolbar.addAction(self.draw_ellipse_act)
-        self.actions['draw_ellipse'] = self.draw_ellipse_act
+        self.actions["draw_ellipse"] = self.draw_ellipse_act
 
         self.draw_text_act = QAction(QIcon.fromTheme("draw-text"), "Text", self)
         self.draw_text_act.setCheckable(True)
-        self.draw_text_act.triggered.connect(lambda: self.set_draw_mode('DRAW_TEXT'))
+        self.draw_text_act.triggered.connect(lambda: self.set_draw_mode("DRAW_TEXT"))
         draw_toolbar.addAction(self.draw_text_act)
-        self.actions['draw_text'] = self.draw_text_act
+        self.actions["draw_text"] = self.draw_text_act
 
         draw_toolbar.addSeparator()
 
         # Properties
-        # Color Button
         self.color_btn = QPushButton()
         self.color_btn.setFixedSize(24, 24)
         self.color_btn.setStyleSheet("background-color: red; border: 1px solid #555;")
@@ -227,41 +263,60 @@ class ImageEditorApp(QMainWindow):
 
         draw_toolbar.addSeparator()
 
-        # Width Slider
         width_lbl = QLabel("W:")
         width_lbl.setStyleSheet("margin-left: 5px;")
         draw_toolbar.addWidget(width_lbl)
-        
+
         self.width_slider = QSlider(Qt.Orientation.Horizontal)
         self.width_slider.setRange(1, 20)
         self.width_slider.setValue(3)
         self.width_slider.setFixedWidth(80)
         self.width_slider.valueChanged.connect(self.width_changed)
         draw_toolbar.addWidget(self.width_slider)
-        
+
         self.current_width = 3
 
-        # Sidebar (Dock Widget)
-        dock = QDockWidget("Adjustments", self)
-        dock.setFeatures(QDockWidget.DockWidgetFeature.DockWidgetFloatable | QDockWidget.DockWidgetFeature.DockWidgetMovable)
+        # --- Left Docks: Preset Gallery & Smart Assistant ---
+        self.preset_dock = PresetGalleryDock(self)
+        self.preset_dock.preset_selected.connect(self.on_preset_selected)
+        self.preset_dock.intensity_changed.connect(self.on_preset_intensity_changed)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.preset_dock)
+
+        self.assistant_dock = RevealAssistantDock(self)
+        self.assistant_dock.auto_develop_requested.connect(self.trigger_auto_develop)
+        self.assistant_dock.recommended_preset_requested.connect(self.on_recommended_preset_clicked)
+        self.assistant_dock.smart_crop_1x1_requested.connect(self.trigger_smart_crop_1x1)
+        self.assistant_dock.clean_ai_watermark_requested.connect(self.trigger_clean_ai_watermark)
+        self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.assistant_dock)
+
+        # --- Right Sidebar (Adjustments & RAW Reveal Dock) ---
+        dock = QDockWidget("Adjustments & Revelado", self)
+        dock.setFeatures(
+            QDockWidget.DockWidgetFeature.DockWidgetFloatable
+            | QDockWidget.DockWidgetFeature.DockWidgetMovable
+        )
         dock.setAllowedAreas(Qt.DockWidgetArea.RightDockWidgetArea)
-        
+
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
         sidebar = QWidget()
-        dock.setWidget(sidebar)
+        scroll.setWidget(sidebar)
+        dock.setWidget(scroll)
         self.addDockWidget(Qt.DockWidgetArea.RightDockWidgetArea, dock)
-        self.dock = dock # To hide/show
+        self.dock = dock
 
         layout = QVBoxLayout(sidebar)
         layout.setAlignment(Qt.AlignmentFlag.AlignTop)
 
         # History List
         history_lbl = QLabel("History")
-        history_lbl.setStyleSheet("font-weight: bold; margin-top: 10px;")
+        history_lbl.setStyleSheet("font-weight: bold; margin-top: 6px;")
         layout.addWidget(history_lbl)
 
         self.history_list = QListWidget()
-        self.history_list.setMaximumHeight(200) # Limit height
-        self.history_list.setStyleSheet("""
+        self.history_list.setMaximumHeight(140)
+        self.history_list.setStyleSheet(
+            """
             QListWidget {
                 background-color: #252525;
                 border: 1px solid #3A3939;
@@ -275,34 +330,64 @@ class ImageEditorApp(QMainWindow):
                 background-color: #2a82da;
                 color: white;
             }
-        """)
+            """
+        )
         layout.addWidget(self.history_list)
-        layout.addSpacing(10)
+        layout.addSpacing(8)
 
         # Reset Button
         reset_btn = QPushButton("Reset All")
         reset_btn.clicked.connect(self.reset_adjustments)
         layout.addWidget(reset_btn)
-        
-        layout.addSpacing(20)
 
-        # Sliders
+        layout.addSpacing(12)
+
+        # Classic Sliders
+        classic_lbl = QLabel("Ajustes Básicos")
+        classic_lbl.setStyleSheet("font-weight: bold; color: #6cb6ff;")
+        layout.addWidget(classic_lbl)
+
         self.sl_brightness = self.create_slider(layout, "Brightness", 0.0, 2.0, 1.0)
         self.sl_contrast = self.create_slider(layout, "Contrast", 0.0, 2.0, 1.0)
         self.sl_saturation = self.create_slider(layout, "Saturation", 0.0, 2.0, 1.0)
 
-        # Spacer
+        layout.addSpacing(12)
+
+        # RAW / Reveal Parametric Sliders
+        reveal_lbl = QLabel("Revelado Fotográfico HD")
+        reveal_lbl.setStyleSheet("font-weight: bold; color: #6cb6ff;")
+        layout.addWidget(reveal_lbl)
+
+        self.sl_ev = self.create_reveal_slider(layout, "Exposición (EV)", -1.5, 1.5, 0.0)
+        self.sl_shadows = self.create_reveal_slider(layout, "Sombras", -1.0, 1.0, 0.0)
+        self.sl_highlights = self.create_reveal_slider(layout, "Altas Luces", -1.0, 1.0, 0.0)
+        self.sl_wb_temp = self.create_reveal_slider(layout, "Temperatura WB", -1.0, 1.0, 0.0)
+        self.sl_denoise = self.create_reveal_slider(layout, "Denoise HD (Sin Grano)", 0.0, 1.0, 0.0)
+        self.sl_sharpen = self.create_reveal_slider(layout, "Nitidez Estructural HD", 0.0, 1.0, 0.0)
+
         layout.addStretch()
 
     def create_slider(self, parent_layout, label_text, min_val, max_val, default_val):
         lbl = QLabel(label_text)
         parent_layout.addWidget(lbl)
-        
+
         slider = QSlider(Qt.Orientation.Horizontal)
         slider.setRange(int(min_val * 100), int(max_val * 100))
         slider.setValue(int(default_val * 100))
         slider.valueChanged.connect(self.adjustments_changed)
-        slider.sliderPressed.connect(self.slider_pressed) # Track start of adjustment
+        slider.sliderPressed.connect(self.slider_pressed)
+        parent_layout.addWidget(slider)
+        return slider
+
+    def create_reveal_slider(self, parent_layout, label_text, min_val, max_val, default_val):
+        lbl = QLabel(label_text)
+        parent_layout.addWidget(lbl)
+
+        slider = QSlider(Qt.Orientation.Horizontal)
+        slider.setRange(int(min_val * 100), int(max_val * 100))
+        slider.setValue(int(default_val * 100))
+        slider.valueChanged.connect(self.reveal_sliders_changed)
+        slider.sliderPressed.connect(self.slider_pressed)
         parent_layout.addWidget(slider)
         return slider
 
@@ -310,8 +395,7 @@ class ImageEditorApp(QMainWindow):
         """Sets a dark theme palette suitable for Ubuntu/Gnome."""
         self.setAutoFillBackground(True)
         app = QApplication.instance()
-        
-        # Dark Palette
+
         palette = QPalette()
         palette.setColor(QPalette.ColorRole.Window, QColor(53, 53, 53))
         palette.setColor(QPalette.ColorRole.WindowText, Qt.GlobalColor.white)
@@ -326,11 +410,11 @@ class ImageEditorApp(QMainWindow):
         palette.setColor(QPalette.ColorRole.Link, QColor(42, 130, 218))
         palette.setColor(QPalette.ColorRole.Highlight, QColor(42, 130, 218))
         palette.setColor(QPalette.ColorRole.HighlightedText, Qt.GlobalColor.black)
-        
+
         app.setPalette(palette)
-        
-        # Stylesheet for sliders and specific widgets to look crisp
-        app.setStyleSheet("""
+
+        app.setStyleSheet(
+            """
             QToolTip { 
                 color: #ffffff; 
                 background-color: #2a82da; 
@@ -369,67 +453,80 @@ class ImageEditorApp(QMainWindow):
             QPushButton:hover {
                 background-color: #3294f0;
             }
-        """)
+            """
+        )
 
     def open_start_page(self):
         start_page = StartPageWidget(self.recent_files)
         start_page.file_opened.connect(self.handle_file_opened)
         index = self.tabs.addTab(start_page, "Start")
         self.tabs.setCurrentWidget(start_page)
-        # Lock the tab (remove close button)
         self.tabs.tabBar().setTabButton(index, QTabBar.ButtonPosition.RightSide, None)
         self.tab_ui_update()
 
     def open_image_dialog(self):
+        file_filter = (
+            "All Supported Photos (*.png *.jpg *.jpeg *.bmp *.tif *.tiff "
+            "*.arw *.ARW *.cr2 *.CR2 *.cr3 *.CR3 *.nef *.NEF *.dng *.DNG *.raf *.RAF *.orf *.ORF);;"
+            "RAW Photos (*.arw *.ARW *.cr2 *.CR2 *.cr3 *.CR3 *.nef *.NEF *.dng *.DNG *.raf *.RAF *.orf *.ORF);;"
+            "Standard Images (*.png *.jpg *.jpeg *.bmp *.tif *.tiff)"
+        )
         file_path, _ = QFileDialog.getOpenFileName(
-            self, "Open Image", "", "Images (*.png *.jpg *.jpeg *.bmp)"
+            self, "Open Photo / RAW", "", file_filter
         )
         if file_path:
             self.create_editor_tab(file_path)
             logger.info(f"Opened image: {file_path}")
 
     def handle_file_opened(self, path):
-         if not path:
-             self.open_image_dialog()
-         else:
-             self.create_editor_tab(path)
-            
+        if not path:
+            self.open_image_dialog()
+        else:
+            self.create_editor_tab(path)
+
     def create_editor_tab(self, file_path):
         tab = EditorTab()
         if tab.load_image(file_path):
             filename = os.path.basename(file_path)
             index = self.tabs.addTab(tab, filename)
             self.tabs.setCurrentIndex(index)
-            # Add to recents (Mock for now, or find the start page)
             self.update_recents(file_path)
-            
-            # Connect History Signal
+
             tab.history_updated.connect(lambda: self.update_history_ui(tab))
             self.update_history_ui(tab)
+            self.refresh_reveal_panels(tab)
         else:
             QMessageBox.warning(self, "Error", "Failed to load image.")
 
+    def refresh_reveal_panels(self, tab: EditorTab):
+        """Updates Preset Gallery thumbnails and Smart Assistant diagnosis for `tab`."""
+        if not isinstance(tab, EditorTab):
+            return
+        base_rgb = tab.model.get_base_float_rgb()
+        self.preset_dock.update_thumbnails(base_rgb)
+        self.preset_dock.sync_from_model(tab.model.active_preset, tab.model.preset_intensity)
+        analysis = tab.model.analyze_current_image()
+        self.assistant_dock.update_analysis(analysis)
+
     def update_recents(self, path):
-        # Update internal list
         if path in self.recent_files:
             self.recent_files.remove(path)
         self.recent_files.insert(0, path)
-        self.recent_files = self.recent_files[:10] # Keep last 10
+        self.recent_files = self.recent_files[:10]
         self.save_recents()
 
-        # Update Start Page UI if it exists
         for i in range(self.tabs.count()):
             widget = self.tabs.widget(i)
             if isinstance(widget, StartPageWidget):
                 widget.add_recent(path)
                 break
-    
+
     def load_recents(self):
         import json
         recents_path = os.path.expanduser("~/.image_editor_recents.json")
         if os.path.exists(recents_path):
             try:
-                with open(recents_path, 'r') as f:
+                with open(recents_path, "r") as f:
                     return json.load(f)
             except Exception as e:
                 logger.warning(f"Failed to load recent files: {e}")
@@ -440,71 +537,57 @@ class ImageEditorApp(QMainWindow):
         import json
         recents_path = os.path.expanduser("~/.image_editor_recents.json")
         try:
-             with open(recents_path, 'w') as f:
+            with open(recents_path, "w") as f:
                 json.dump(self.recent_files, f)
         except Exception as e:
             logger.warning(f"Failed to save recent files: {e}")
-            pass
 
     def close_tab(self, index):
         widget = self.tabs.widget(index)
         if isinstance(widget, StartPageWidget):
-            return # Don't close start page
+            return
 
         self.tabs.removeTab(index)
-        # If no tabs left (shouldn't happen if Start Page is locked, but just in case)
         if self.tabs.count() == 0:
             self.open_start_page()
-
-    def on_tab_changed(self):
-        self.tab_ui_update()
 
     def tab_ui_update(self):
         current = self.tabs.currentWidget()
         is_editor = isinstance(current, EditorTab)
-        
-        # Enable/Disable Actions
-        for name, action in self.actions.items():
+
+        for _name, action in self.actions.items():
             action.setEnabled(is_editor)
 
         self.dock.setVisible(is_editor)
-        
+        self.preset_dock.setVisible(is_editor)
+        self.assistant_dock.setVisible(is_editor)
+
         if is_editor:
-             # Sync UI from model
-             self.update_adjustments_ui(current)
-             self.update_history_ui(current)
-             # Sync Crop State
-             self.actions['crop'].setChecked(current.canvas.mode == 'CROP')
-             
-             # Sync Drawing Tools State
-             # We should also update the drawing toolbar buttons based on mode
-             self.update_drawing_toolbar(current.canvas.mode)
+            self.update_adjustments_ui(current)
+            self.update_history_ui(current)
+            self.refresh_reveal_panels(current)
+            self.actions["crop"].setChecked(current.canvas.mode == "CROP")
+            self.update_drawing_toolbar(current.canvas.mode)
 
     def update_drawing_toolbar(self, mode):
-        # Uncheck all first (handled in set_draw_mode usually, but this is visual sync)
-        # Actually set_draw_mode updates the action checked state.
-        # But if tab changed, we need to reflect the new tab's mode in the UI actions.
-        
-        # Map mode to action key
         mode_map = {
-            'SELECT_SHAPE': 'draw_select',
-            'DRAW_LINE': 'draw_line',
-            'DRAW_ARROW': 'draw_arrow',
-            'DRAW_RECT': 'draw_rect',
-            'DRAW_ELLIPSE': 'draw_ellipse',
-            'DRAW_TEXT': 'draw_text',
-            'DRAW_PEN': 'draw_pen',
-            'DRAW_ERASER': 'draw_eraser',
-            'CROP': 'crop'
+            "SELECT_SHAPE": "draw_select",
+            "DRAW_LINE": "draw_line",
+            "DRAW_ARROW": "draw_arrow",
+            "DRAW_RECT": "draw_rect",
+            "DRAW_ELLIPSE": "draw_ellipse",
+            "DRAW_TEXT": "draw_text",
+            "DRAW_PEN": "draw_pen",
+            "DRAW_ERASER": "draw_eraser",
+            "CROP": "crop",
         }
-        
-        # Block signals to prevent triggering set_draw_mode logic which modifies the model
+
         for key, act in self.actions.items():
-            if key.startswith('draw_') or key == 'crop':
+            if key.startswith("draw_") or key == "crop":
                 act.blockSignals(True)
                 act.setChecked(False)
                 act.blockSignals(False)
-        
+
         target_key = mode_map.get(mode)
         if target_key and target_key in self.actions:
             self.actions[target_key].blockSignals(True)
@@ -531,74 +614,128 @@ class ImageEditorApp(QMainWindow):
             if current.undo():
                 self.update_adjustments_ui(current)
                 self.update_history_ui(current)
+                self.preset_dock.sync_from_model(
+                    current.model.active_preset, current.model.preset_intensity
+                )
 
     def redo_action(self):
         current = self.tabs.currentWidget()
         if isinstance(current, EditorTab):
-             if current.redo():
+            if current.redo():
                 self.update_adjustments_ui(current)
                 self.update_history_ui(current)
+                self.preset_dock.sync_from_model(
+                    current.model.active_preset, current.model.preset_intensity
+                )
 
     def zoom(self, factor):
         current = self.tabs.currentWidget()
         if isinstance(current, EditorTab):
-             current.zoom(factor)
+            current.zoom(factor)
 
     def rotate_image(self, angle):
         current = self.tabs.currentWidget()
         if isinstance(current, EditorTab):
             current.rotate(angle)
             self.update_history_ui(current)
+            self.refresh_reveal_panels(current)
 
     def flip_image(self, horizontal):
         current = self.tabs.currentWidget()
         if isinstance(current, EditorTab):
             current.flip(horizontal)
             self.update_history_ui(current)
+            self.refresh_reveal_panels(current)
 
     def remove_background(self):
         current = self.tabs.currentWidget()
         if isinstance(current, EditorTab):
             current.remove_background()
 
+    # --- Preset & Assistant Handlers ---
+    def on_preset_selected(self, preset_id: str, intensity: float):
+        current = self.tabs.currentWidget()
+        if isinstance(current, EditorTab):
+            current.apply_preset(preset_id, intensity=intensity, push_history=True)
+            self.update_history_ui(current)
+
+    def on_preset_intensity_changed(self, preset_id: str, intensity: float):
+        current = self.tabs.currentWidget()
+        if isinstance(current, EditorTab):
+            current.apply_preset(preset_id, intensity=intensity, push_history=False)
+
+    def on_recommended_preset_clicked(self, preset_id: str):
+        current = self.tabs.currentWidget()
+        if isinstance(current, EditorTab):
+            current.apply_preset(preset_id, intensity=1.0, push_history=True)
+            self.preset_dock.sync_from_model(preset_id, 1.0)
+            self.update_history_ui(current)
+
+    def trigger_auto_develop(self, apply_recommended_preset: bool = True):
+        current = self.tabs.currentWidget()
+        if isinstance(current, EditorTab):
+            current.auto_develop(apply_recommended_preset=apply_recommended_preset)
+            self.update_adjustments_ui(current)
+            self.preset_dock.sync_from_model(
+                current.model.active_preset, current.model.preset_intensity
+            )
+            self.update_history_ui(current)
+
+    def trigger_smart_crop_1x1(self):
+        current = self.tabs.currentWidget()
+        if isinstance(current, EditorTab):
+            if current.smart_crop_square_1x1():
+                self.update_history_ui(current)
+                self.refresh_reveal_panels(current)
+
+    def trigger_clean_ai_watermark(self):
+        current = self.tabs.currentWidget()
+        if isinstance(current, EditorTab):
+            if current.clean_ai_watermark():
+                self.update_history_ui(current)
+                self.refresh_reveal_panels(current)
+
     def set_draw_mode(self, mode):
-        # Uncheck others
         draw_actions = [
-            self.actions['draw_select'], self.actions['draw_line'], self.actions['draw_arrow'],
-            self.actions['draw_rect'], self.actions['draw_ellipse'], self.actions['draw_text'],
-            self.actions['draw_pen'], self.actions['draw_eraser']
+            self.actions["draw_select"],
+            self.actions["draw_line"],
+            self.actions["draw_arrow"],
+            self.actions["draw_rect"],
+            self.actions["draw_ellipse"],
+            self.actions["draw_text"],
+            self.actions["draw_pen"],
+            self.actions["draw_eraser"],
         ]
-        
+
         mode_map = {
-            'SELECT_SHAPE': 'draw_select',
-            'DRAW_LINE': 'draw_line',
-            'DRAW_ARROW': 'draw_arrow',
-            'DRAW_RECT': 'draw_rect',
-            'DRAW_ELLIPSE': 'draw_ellipse',
-            'DRAW_TEXT': 'draw_text',
-            'DRAW_PEN': 'draw_pen',
-            'DRAW_ERASER': 'draw_eraser'
+            "SELECT_SHAPE": "draw_select",
+            "DRAW_LINE": "draw_line",
+            "DRAW_ARROW": "draw_arrow",
+            "DRAW_RECT": "draw_rect",
+            "DRAW_ELLIPSE": "draw_ellipse",
+            "DRAW_TEXT": "draw_text",
+            "DRAW_PEN": "draw_pen",
+            "DRAW_ERASER": "draw_eraser",
         }
-        
+
         target_key = mode_map.get(mode)
-        
+
         for act in draw_actions:
             act.blockSignals(True)
             act.setChecked(False)
             act.blockSignals(False)
-        
+
         if target_key:
             self.actions[target_key].blockSignals(True)
             self.actions[target_key].setChecked(True)
             self.actions[target_key].blockSignals(False)
 
-        # Propagate to Tab
         current = self.tabs.currentWidget()
         if isinstance(current, EditorTab):
             current.set_draw_mode(mode)
-            if mode != 'CROP':
-                 self.actions['crop'].setChecked(False) 
-            
+            if mode != "CROP":
+                self.actions["crop"].setChecked(False)
+
     def choose_color(self):
         from PyQt6.QtWidgets import QColorDialog
         color = QColorDialog.getColor(self.current_color, self, "Choose Color")
@@ -620,13 +757,13 @@ class ImageEditorApp(QMainWindow):
         current = self.tabs.currentWidget()
         if isinstance(current, EditorTab):
             if checked:
-                current.set_draw_mode('CROP')
-                self.set_draw_mode('CROP') 
-                self.actions['crop'].setChecked(True)
+                current.set_draw_mode("CROP")
+                self.set_draw_mode("CROP")
+                self.actions["crop"].setChecked(True)
             else:
-                current.set_draw_mode('SELECT_SHAPE')
-                self.set_draw_mode('SELECT_SHAPE')
-    
+                current.set_draw_mode("SELECT_SHAPE")
+                self.set_draw_mode("SELECT_SHAPE")
+
     def on_tab_changed(self):
         self.tab_ui_update()
         self.update_tool_properties()
@@ -645,50 +782,83 @@ class ImageEditorApp(QMainWindow):
             s = self.sl_saturation.value() / 100.0
             current.set_adjustments(b, c, s)
 
+    def reveal_sliders_changed(self):
+        current = self.tabs.currentWidget()
+        if isinstance(current, EditorTab):
+            current.set_reveal_params(
+                ev=self.sl_ev.value() / 100.0,
+                shadows=self.sl_shadows.value() / 100.0,
+                highlights=self.sl_highlights.value() / 100.0,
+                wb_temp=self.sl_wb_temp.value() / 100.0,
+                denoise=self.sl_denoise.value() / 100.0,
+                sharpen=self.sl_sharpen.value() / 100.0,
+            )
+
     def reset_adjustments(self):
         current = self.tabs.currentWidget()
         if isinstance(current, EditorTab):
             current.reset_adjustments()
             self.reset_adjustments_ui()
+            self.preset_dock.sync_from_model("none", 1.0)
             self.update_history_ui(current)
 
     def update_history_ui(self, tab):
         self.history_list.clear()
-        if not tab: return
-        
-        # Populate history
-        for i, state in enumerate(tab.model.history): # Access Model via Tab
+        if not tab:
+            return
+
+        for i, state in enumerate(tab.model.history):
             self.history_list.addItem(f"{i+1}. {state['description']}")
-        
+
         if tab.model.history:
             self.history_list.setCurrentRow(len(tab.model.history) - 1)
-        
-        self.actions['undo'].setEnabled(len(tab.model.history) > 1)
-        self.actions['redo'].setEnabled(len(tab.model.redo_stack) > 0)
+
+        self.actions["undo"].setEnabled(len(tab.model.history) > 1)
+        self.actions["redo"].setEnabled(len(tab.model.redo_stack) > 0)
 
     def update_adjustments_ui(self, tab):
-        if not tab: return
-        self.sl_brightness.blockSignals(True)
-        self.sl_contrast.blockSignals(True)
-        self.sl_saturation.blockSignals(True)
-        
+        if not tab:
+            return
+        sliders = [
+            self.sl_brightness,
+            self.sl_contrast,
+            self.sl_saturation,
+            self.sl_ev,
+            self.sl_shadows,
+            self.sl_highlights,
+            self.sl_wb_temp,
+            self.sl_denoise,
+            self.sl_sharpen,
+        ]
+        for sl in sliders:
+            sl.blockSignals(True)
+
         self.sl_brightness.setValue(int(tab.model.brightness * 100))
         self.sl_contrast.setValue(int(tab.model.contrast * 100))
         self.sl_saturation.setValue(int(tab.model.saturation * 100))
-        
-        self.sl_brightness.blockSignals(False)
-        self.sl_contrast.blockSignals(False)
-        self.sl_saturation.blockSignals(False)
+        self.sl_ev.setValue(int(tab.model.ev * 100))
+        self.sl_shadows.setValue(int(tab.model.shadows * 100))
+        self.sl_highlights.setValue(int(tab.model.highlights * 100))
+        self.sl_wb_temp.setValue(int(tab.model.wb_temp * 100))
+        self.sl_denoise.setValue(int(tab.model.denoise * 100))
+        self.sl_sharpen.setValue(int(tab.model.sharpen * 100))
+
+        for sl in sliders:
+            sl.blockSignals(False)
 
     def reset_adjustments_ui(self):
-        self.sl_brightness.blockSignals(True)
-        self.sl_contrast.blockSignals(True)
-        self.sl_saturation.blockSignals(True)
-        
-        self.sl_brightness.setValue(100)
-        self.sl_contrast.setValue(100)
-        self.sl_saturation.setValue(100)
-        
-        self.sl_brightness.blockSignals(False)
-        self.sl_contrast.blockSignals(False)
-        self.sl_saturation.blockSignals(False)
+        sliders = [
+            (self.sl_brightness, 100),
+            (self.sl_contrast, 100),
+            (self.sl_saturation, 100),
+            (self.sl_ev, 0),
+            (self.sl_shadows, 0),
+            (self.sl_highlights, 0),
+            (self.sl_wb_temp, 0),
+            (self.sl_denoise, 0),
+            (self.sl_sharpen, 0),
+        ]
+        for sl, val in sliders:
+            sl.blockSignals(True)
+            sl.setValue(val)
+            sl.blockSignals(False)
