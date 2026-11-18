@@ -332,3 +332,243 @@ def test_ui_docks_and_main_window_integration(qtbot, tmp_path, synthetic_rgb_flo
     window.reset_adjustments()
     assert current_tab.model.active_preset == "none"
     assert current_tab.model.ev == 0.0
+
+    # Test Qwen AI Chat integration & Custom Preset creation via chat
+    with patch("src.ui.assistant_dock.query_qwen_agent") as mock_qwen:
+        mock_qwen.return_value = {
+            "reply": "He aplicado CineStill 800T al 80%, subido sombras y guardado el preset Nocturno Custom.",
+            "action": "update",
+            "preset": "cinestill_800t",
+            "preset_intensity": 0.80,
+            "adjustments": {
+                "ev": 0.25,
+                "shadows": 0.35,
+                "highlights": 0.20,
+                "wb_temp": 0.15,
+                "denoise": 0.30,
+                "sharpen": 0.40,
+                "brightness": 1.05,
+                "contrast": 1.10,
+                "saturation": 1.15,
+            },
+            "save_preset_as": "Nocturno Custom",
+        }
+        window.assistant_dock.send_chat_message("Pon cinestill al 80%, abre sombras y guárdalo como Nocturno Custom", run_sync=True)
+        assert current_tab.model.active_preset == "custom_nocturno_custom"
+        assert "custom_nocturno_custom" in PRESET_DEFINITIONS
+
+    # Test chat global actions (auto_develop, smart_crop_1x1, clean_ai, undo, reset)
+    window.on_chat_command_executed({"action": "auto_develop"})
+    window.on_chat_command_executed({"action": "smart_crop_1x1"})
+    window.on_chat_command_executed({"action": "clean_ai"})
+    window.on_chat_command_executed({"action": "undo"})
+    window.on_chat_command_executed({"action": "reset"})
+    window.on_chat_command_executed({"action": "update"})  # no-op empty update
+
+
+def test_custom_presets_and_llm_chat_agent(tmp_path, synthetic_rgb_float):
+    import json
+    from src.processing.preset_engine import (
+        register_custom_preset,
+        save_custom_presets,
+        load_custom_presets,
+    )
+    from src.processing.llm_chat_agent import (
+        list_embedded_qwen_models,
+        resolve_model_path,
+        ensure_model_downloaded,
+        get_embedded_llama,
+        build_system_prompt,
+        _extract_json_dict,
+        parse_natural_language_fallback,
+        normalize_agent_response,
+        query_qwen_agent,
+    )
+
+    # 1. Custom preset registration, persistence, and grading
+    custom_file = str(tmp_path / "custom_presets.json")
+    pid = register_custom_preset(
+        name="Mi Dorado Cálido",
+        recipe={
+            "base_preset": "editorial_viva_hd",
+            "ev": 0.2,
+            "shadows": 0.3,
+            "highlights": 0.1,
+            "wb_temp": 0.2,
+            "denoise": 0.2,
+            "sharpen": 0.3,
+            "brightness": 1.05,
+            "contrast": 1.1,
+            "saturation": 1.15,
+        },
+        persist=False,
+    )
+    assert pid == "custom_mi_dorado_c_lido"
+    graded = apply_preset(synthetic_rgb_float, pid, intensity=1.0)
+    assert graded.shape == synthetic_rgb_float.shape
+    assert save_custom_presets(custom_file) is True
+    assert load_custom_presets(custom_file) >= 1
+    assert load_custom_presets(str(tmp_path / "nonexistent.json")) == 0
+
+    # 2. Natural language fallback coverage across all branches
+    state = {
+        "active_preset": "electric_chroma_hd",
+        "preset_intensity": 0.9,
+        "ev": 0.0,
+        "shadows": 0.0,
+        "highlights": 0.0,
+        "wb_temp": 0.0,
+        "denoise": 0.0,
+        "sharpen": 0.0,
+        "brightness": 1.0,
+        "contrast": 1.0,
+        "saturation": 1.0,
+        "scene_type": "Urbano",
+        "recommended_preset": "electric_chroma_hd",
+    }
+
+    assert parse_natural_language_fallback("deshacer cambio", state)["action"] == "undo"
+    assert parse_natural_language_fallback("reinicia todo de cero", state)["action"] == "reset"
+    assert parse_natural_language_fallback("auto revela la foto", state)["action"] == "auto_develop"
+    assert parse_natural_language_fallback("recorta formato cuadrado 1:1", state)["action"] == "smart_crop_1x1"
+    assert parse_natural_language_fallback("limpiar ia y marca de agua", state)["action"] == "clean_ai"
+
+    r_mod = parse_natural_language_fallback(
+        "aplica el preset recomendado al 70%, más luz, abre sombras, protege altas luces, "
+        "más cálida, sin grano, más nitidez, más contraste, más saturación y guárdalo como Super Urbano",
+        state,
+    )
+    assert r_mod["preset"] == "electric_chroma_hd"
+    assert r_mod["preset_intensity"] == 0.70
+    assert r_mod["save_preset_as"] == "Super Urbano"
+    assert r_mod["adjustments"]["ev"] > 0
+    assert r_mod["adjustments"]["shadows"] > 0
+    assert r_mod["adjustments"]["highlights"] > 0
+    assert r_mod["adjustments"]["wb_temp"] > 0
+    assert r_mod["adjustments"]["denoise"] > 0
+    assert r_mod["adjustments"]["sharpen"] > 0
+    assert r_mod["adjustments"]["contrast"] > 1.0
+    assert r_mod["adjustments"]["saturation"] > 1.0
+
+    r_inv = parse_natural_language_fallback(
+        "pon kodachrome, suaviza el preset, exposición a -0.4, oscurece sombras, más fría, menos contraste y menos saturación",
+        state,
+    )
+    assert r_inv["preset"] == "kodachrome_64"
+    assert r_inv["adjustments"]["ev"] == -0.4
+    assert r_inv["adjustments"]["shadows"] < 0
+    assert r_inv["adjustments"]["wb_temp"] < 0
+    assert r_inv["adjustments"]["contrast"] < 1.0
+    assert r_inv["adjustments"]["saturation"] < 1.0
+
+    r_dark = parse_natural_language_fallback("menos luz", state)
+    assert r_dark["adjustments"]["ev"] < 0
+
+    r_help = parse_natural_language_fallback("hola qué tal", state)
+    assert "Puedo aplicar" in r_help["reply"]
+
+    # 3. JSON extraction & normalization
+    assert _extract_json_dict("") is None
+    assert _extract_json_dict("<think>pensando</think>```json\n{\"reply\": \"ok\", \"action\": \"update\"}\n```")["reply"] == "ok"
+
+    norm = normalize_agent_response(
+        {
+            "reply": "Listo",
+            "action": "invalid_action",
+            "preset": "cinestill_800t",
+            "preset_intensity": 85,  # 0..100 scale auto-normalized to 0.85
+            "adjustments": {"ev": 0.5, "shadows": "0.3"},
+            "save_preset_as": "Mi Cine",
+        },
+        "pon cinestill",
+        state,
+    )
+    assert norm["preset"] == "cinestill_800t"
+    assert norm["preset_intensity"] == 0.85
+    assert norm["adjustments"]["ev"] == 0.5
+    assert norm["save_preset_as"] == "Mi Cine"
+
+    # 4. Embedded in-process llama_cpp GGUF queries (mocked & live fallback)
+    assert "PRESETS DISPONIBLES" in build_system_prompt(state)
+
+    models = list_embedded_qwen_models()
+    assert len(models) >= 2
+    assert resolve_model_path("qwen2.5:0.5b").endswith("qwen2.5-0.5b-instruct.gguf")
+    assert resolve_model_path("qwen2.5:1.5b").endswith("qwen2.5-1.5b-instruct.gguf")
+
+    fake_llama = MagicMock()
+    fake_llama.create_chat_completion.return_value = {
+        "choices": [
+            {
+                "message": {
+                    "content": json.dumps(
+                        {
+                            "reply": "Aplicado blanco y negro platino.",
+                            "action": "update",
+                            "preset": "blancoynegro_platino_hd",
+                            "preset_intensity": 0.9,
+                            "adjustments": {"contrast": 1.15},
+                            "save_preset_as": None,
+                        }
+                    )
+                }
+            }
+        ]
+    }
+    with patch("src.processing.llm_chat_agent.get_embedded_llama", return_value=fake_llama):
+        res = query_qwen_agent(
+            "pon blanco y negro",
+            state,
+            model_name="Qwen 2.5 1.5B (Integrado Preciso)",
+            history=[{"role": "user", "content": "hola"}],
+        )
+        assert res["preset"] == "blancoynegro_platino_hd"
+        assert res["model_used"] == "qwen2.5-1.5b-instruct.gguf"
+
+    # Test automatic on-demand GGUF download when file is absent in models_dir
+    dl_dir = tmp_path / "models_dl"
+    progress_calls = []
+
+    class _FakeResp:
+        headers = {"Content-Length": "16"}
+
+        def __init__(self):
+            self._chunks = [b"GGUF_FAKE_chunk1", b""]
+
+        def read(self, _n):
+            return self._chunks.pop(0)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+    with patch("urllib.request.urlopen", return_value=_FakeResp()):
+        dl_path = ensure_model_downloaded(
+            "Qwen 2.5 0.5B (Integrado Rápido)",
+            models_dir=str(dl_dir),
+            progress_callback=lambda d, t: progress_calls.append((d, t)),
+        )
+        assert dl_path.endswith("qwen2.5-0.5b-instruct.gguf")
+        assert len(progress_calls) == 1
+        assert progress_calls[0] == (16, 16)
+        # Second call returns cached file without downloading again
+        assert ensure_model_downloaded("qwen2.5:0.5b", models_dir=str(dl_dir)) == dl_path
+
+    # Test download failure cleans up .part file and raises
+    dl_fail_dir = tmp_path / "models_fail"
+    with patch("urllib.request.urlopen", side_effect=OSError("Network unreachable")):
+        with pytest.raises(OSError):
+            ensure_model_downloaded("qwen2.5:1.5b", models_dir=str(dl_fail_dir))
+
+    # Test missing model fallback to built-in NLU
+    res_fallback = query_qwen_agent(
+        "pon cinestill al 75%",
+        state,
+        model_name="nonexistent.gguf",
+        models_dir=str(tmp_path),
+    )
+    assert res_fallback["preset"] == "cinestill_800t"
+    assert res_fallback["preset_intensity"] == 0.75
+    assert res_fallback["model_used"] == "fallback-nlu"

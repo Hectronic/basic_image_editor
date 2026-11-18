@@ -283,10 +283,12 @@ class ImageEditorApp(QMainWindow):
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.preset_dock)
 
         self.assistant_dock = RevealAssistantDock(self)
+        self.assistant_dock.set_state_provider(self.get_active_photo_state)
         self.assistant_dock.auto_develop_requested.connect(self.trigger_auto_develop)
         self.assistant_dock.recommended_preset_requested.connect(self.on_recommended_preset_clicked)
         self.assistant_dock.smart_crop_1x1_requested.connect(self.trigger_smart_crop_1x1)
         self.assistant_dock.clean_ai_watermark_requested.connect(self.trigger_clean_ai_watermark)
+        self.assistant_dock.chat_command_executed.connect(self.on_chat_command_executed)
         self.addDockWidget(Qt.DockWidgetArea.LeftDockWidgetArea, self.assistant_dock)
 
         # --- Right Sidebar (Adjustments & RAW Reveal Dock) ---
@@ -694,6 +696,125 @@ class ImageEditorApp(QMainWindow):
             if current.clean_ai_watermark():
                 self.update_history_ui(current)
                 self.refresh_reveal_panels(current)
+
+    def get_active_photo_state(self) -> dict:
+        """Returns the current photo state dictionary for the Qwen chat agent."""
+        current = self.tabs.currentWidget()
+        if not isinstance(current, EditorTab):
+            return {}
+        m = current.model
+        analysis = m.analyze_current_image() or {}
+        return {
+            "active_preset": m.active_preset,
+            "preset_intensity": m.preset_intensity,
+            "ev": m.ev,
+            "shadows": m.shadows,
+            "highlights": m.highlights,
+            "wb_temp": m.wb_temp,
+            "denoise": m.denoise,
+            "sharpen": m.sharpen,
+            "brightness": m.brightness,
+            "contrast": m.contrast,
+            "saturation": m.saturation,
+            "scene_type": analysis.get("scene_type", "Desconocida"),
+            "recommended_preset": analysis.get("recommended_preset", "electric_chroma_hd"),
+        }
+
+    def on_chat_command_executed(self, cmd: dict):
+        """Applies the structured preset/adjustment/custom-preset command returned by the Qwen chat agent."""
+        current = self.tabs.currentWidget()
+        if not isinstance(current, EditorTab) or not isinstance(cmd, dict):
+            return
+
+        action = cmd.get("action", "update")
+        if action == "undo":
+            self.undo_action()
+            return
+        if action == "reset":
+            self.reset_adjustments()
+            return
+        if action == "auto_develop":
+            self.trigger_auto_develop(True)
+            return
+        if action == "smart_crop_1x1":
+            self.trigger_smart_crop_1x1()
+            return
+        if action == "clean_ai":
+            self.trigger_clean_ai_watermark()
+            return
+
+        m = current.model
+        preset_id = cmd.get("preset")
+        intensity = cmd.get("preset_intensity")
+        adj = cmd.get("adjustments") or {}
+        save_as = cmd.get("save_preset_as")
+
+        has_changes = bool(preset_id is not None or intensity is not None or adj or save_as)
+        if not has_changes:
+            return
+
+        # Update preset if requested
+        if preset_id is not None:
+            m.active_preset = preset_id
+        if intensity is not None:
+            m.preset_intensity = float(intensity)
+
+        # Update parametric reveal adjustments
+        if adj.get("ev") is not None:
+            m.ev = float(adj["ev"])
+        if adj.get("shadows") is not None:
+            m.shadows = float(adj["shadows"])
+        if adj.get("highlights") is not None:
+            m.highlights = float(adj["highlights"])
+        if adj.get("wb_temp") is not None:
+            m.wb_temp = float(adj["wb_temp"])
+        if adj.get("denoise") is not None:
+            m.denoise = float(adj["denoise"])
+        if adj.get("sharpen") is not None:
+            m.sharpen = float(adj["sharpen"])
+
+        # Update classic adjustments
+        if adj.get("brightness") is not None:
+            m.brightness = float(adj["brightness"])
+        if adj.get("contrast") is not None:
+            m.contrast = float(adj["contrast"])
+        if adj.get("saturation") is not None:
+            m.saturation = float(adj["saturation"])
+
+        # Register / modify custom preset if requested
+        if save_as:
+            from src.processing.preset_engine import register_custom_preset
+            recipe = {
+                "base_preset": m.active_preset if not str(m.active_preset).startswith("custom_") else "none",
+                "ev": m.ev,
+                "shadows": m.shadows,
+                "highlights": m.highlights,
+                "wb_temp": m.wb_temp,
+                "wb_tint": m.wb_tint,
+                "denoise": m.denoise,
+                "sharpen": m.sharpen,
+                "brightness": m.brightness,
+                "contrast": m.contrast,
+                "saturation": m.saturation,
+            }
+            new_pid = register_custom_preset(
+                name=save_as,
+                recipe=recipe,
+                description=f"Preset personalizado ({save_as}) creado por chat IA.",
+            )
+            # Reset additive sliders into the baked custom preset so it isn't applied twice
+            m._reset_parameters()
+            m.active_preset = new_pid
+            m.preset_intensity = 1.0
+            m._invalidate_caches()
+            self.preset_dock.refresh_preset_list(m.get_base_float_rgb())
+
+        m._update_display_image()
+        current.update_canvas()
+        m.push_state("Ajuste por Chat IA")
+        self.update_adjustments_ui(current)
+        self.preset_dock.sync_from_model(m.active_preset, m.preset_intensity)
+        self.update_history_ui(current)
 
     def set_draw_mode(self, mode):
         draw_actions = [

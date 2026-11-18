@@ -8,6 +8,9 @@ the Free Software Foundation, either version 3 of the License, or
 (at your option) any later version.
 """
 
+import json
+import os
+import re
 from collections import OrderedDict
 import cv2
 import numpy as np
@@ -15,9 +18,14 @@ import numpy as np
 from src.processing.raw_developer import (
     apply_lut_curve_float,
     build_gamma_s_curve_lut,
+    develop_base_image,
     protect_gamut_and_highlights,
     sharpen_hd_modern,
 )
+
+
+CUSTOM_PRESETS_PATH = os.path.expanduser("~/.image_editor_custom_presets.json")
+_CUSTOM_RECIPES: dict[str, dict] = {}
 
 
 PRESET_DEFINITIONS = OrderedDict(
@@ -333,6 +341,135 @@ _PRESET_FUNCTIONS = {
     "cinestill_800t": _grade_cinestill_800t,
     "selectivo_platino_hd": _grade_selectivo_platino_hd,
 }
+
+
+def _build_custom_preset_fn(recipe: dict):
+    """Builds a fast grading function from a custom preset recipe dict."""
+    base_preset = recipe.get("base_preset", "none")
+    base_fn = _PRESET_FUNCTIONS.get(base_preset)
+    ev = float(recipe.get("ev", 0.0))
+    shadows = float(recipe.get("shadows", 0.0))
+    highlights = float(recipe.get("highlights", 0.0))
+    wb_temp = float(recipe.get("wb_temp", 0.0))
+    wb_tint = float(recipe.get("wb_tint", 0.0))
+    denoise = float(recipe.get("denoise", 0.0))
+    sharpen = float(recipe.get("sharpen", 0.0))
+    brightness = float(recipe.get("brightness", 1.0))
+    contrast = float(recipe.get("contrast", 1.0))
+    saturation = float(recipe.get("saturation", 1.0))
+
+    has_dev = any(
+        abs(x) > 1e-4 for x in (ev, shadows, highlights, wb_temp, wb_tint, denoise, sharpen)
+    )
+    sat_mat = _saturation_matrix(saturation) if abs(saturation - 1.0) > 1e-3 else None
+
+    def _grade_custom(img: np.ndarray) -> np.ndarray:
+        out = base_fn(img) if base_fn is not None else img.copy()
+        if has_dev:
+            out = develop_base_image(
+                out,
+                ev=ev,
+                shadows=shadows,
+                highlights=highlights,
+                wb_temp=wb_temp,
+                wb_tint=wb_tint,
+                denoise=denoise,
+                sharpen=sharpen,
+            )
+        if abs(brightness - 1.0) > 1e-3 or abs(contrast - 1.0) > 1e-3:
+            out = np.clip((out - 0.5) * contrast + 0.5 + (brightness - 1.0) * 0.5, 0.0, 1.0)
+        if sat_mat is not None:
+            out = np.clip(cv2.transform(out.astype(np.float32), sat_mat), 0.0, 1.0)
+        return out.astype(np.float32)
+
+    return _grade_custom
+
+
+def register_custom_preset(
+    name: str,
+    recipe: dict,
+    description: str = "Preset personalizado creado con el asistente de chat.",
+    preset_id: str | None = None,
+    persist: bool = True,
+) -> str:
+    """
+    Registers or updates a custom preset in `PRESET_DEFINITIONS` and `_PRESET_FUNCTIONS`.
+    Returns the `preset_id`.
+    """
+    if not preset_id:
+        slug = re.sub(r"[^a-z0-9]+", "_", name.lower()).strip("_") or "custom"
+        preset_id = f"custom_{slug}"
+
+    clean_recipe = {
+        "name": name,
+        "description": description,
+        "base_preset": recipe.get("base_preset", "none"),
+        "ev": float(recipe.get("ev", 0.0)),
+        "shadows": float(recipe.get("shadows", 0.0)),
+        "highlights": float(recipe.get("highlights", 0.0)),
+        "wb_temp": float(recipe.get("wb_temp", 0.0)),
+        "wb_tint": float(recipe.get("wb_tint", 0.0)),
+        "denoise": float(recipe.get("denoise", 0.0)),
+        "sharpen": float(recipe.get("sharpen", 0.0)),
+        "brightness": float(recipe.get("brightness", 1.0)),
+        "contrast": float(recipe.get("contrast", 1.0)),
+        "saturation": float(recipe.get("saturation", 1.0)),
+    }
+
+    PRESET_DEFINITIONS[preset_id] = {
+        "id": preset_id,
+        "name": name,
+        "badge": "★ Custom IA",
+        "category": "Personalizado",
+        "description": description,
+        "best_for": ["Edición por Chat", "Personalizado"],
+        "is_custom": True,
+        "recipe": clean_recipe,
+    }
+    _PRESET_FUNCTIONS[preset_id] = _build_custom_preset_fn(clean_recipe)
+    _CUSTOM_RECIPES[preset_id] = clean_recipe
+
+    if persist:
+        save_custom_presets()
+    return preset_id
+
+
+def save_custom_presets(filepath: str = CUSTOM_PRESETS_PATH) -> bool:
+    """Saves all custom preset recipes to disk as JSON."""
+    try:
+        with open(filepath, "w", encoding="utf-8") as f:
+            json.dump(_CUSTOM_RECIPES, f, indent=2, ensure_ascii=False)
+        return True
+    except Exception:
+        return False
+
+
+def load_custom_presets(filepath: str = CUSTOM_PRESETS_PATH) -> int:
+    """Loads custom preset recipes from disk and registers them."""
+    if not os.path.exists(filepath):
+        return 0
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            data = json.load(f)
+        count = 0
+        if isinstance(data, dict):
+            for pid, recipe in data.items():
+                if isinstance(recipe, dict):
+                    register_custom_preset(
+                        name=recipe.get("name", pid),
+                        recipe=recipe,
+                        description=recipe.get("description", "Preset personalizado."),
+                        preset_id=pid,
+                        persist=False,
+                    )
+                    count += 1
+        return count
+    except Exception:
+        return 0
+
+
+# Load any saved custom presets on module import
+load_custom_presets()
 
 
 def apply_preset(

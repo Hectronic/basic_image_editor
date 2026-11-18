@@ -27,3 +27,7 @@ build/
 # Logs
 log/.coverage
 log/
+
+# Embedded GGUF Model Weights (auto-downloaded on demand into models/)
+models/*.gguf
+models/*.part

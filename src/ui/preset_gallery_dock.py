@@ -132,6 +132,13 @@ class PresetGalleryDock(QDockWidget):
         self.list_widget.setCurrentRow(0)
         self._updating_ui = False
 
+    def refresh_preset_list(self, base_rgb_float: np.ndarray | None = None):
+        """Rebuilds the preset list when a custom preset is added or modified."""
+        self._populate_default_items()
+        self._last_thumb_img_id = None
+        if base_rgb_float is not None:
+            self.update_thumbnails(base_rgb_float)
+
     def update_thumbnails(self, base_rgb_float: np.ndarray | None):
         """Renders live preview thumbnails for every preset using a single 96x64 downsample."""
         if base_rgb_float is None:
