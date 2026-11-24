@@ -11,8 +11,14 @@ the Free Software Foundation, either version 3 of the License, or
 import io
 from PyQt6.QtCore import QThread, pyqtSignal
 from PIL import Image
-import rembg
-import rembg
+try:
+    import rembg
+except ImportError:  # pragma: no cover
+    class _DummyRembg:
+        @staticmethod
+        def remove(img):
+            raise RuntimeError("rembg is not installed")
+    rembg = _DummyRembg()
 import numpy as np
 import logging
 

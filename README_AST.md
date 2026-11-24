@@ -6,11 +6,12 @@ Esti proyeutu nació de la necesidá de tener un editor simple que faiga les cos
 
 ## Carauterístiques
 
-* **Llenzu Adaptable**: visualización y edición d'imáxenes.
-* **Operaciones d'Archivu**: Abrir y guardar imáxenes.
-* **Tresformamientos**: Xirar y voltiar imáxenes.
-* **Ferramienta de Recorte**: Funcionalidá de recorte fácil d'usar.
-* **Axustes**: Controles de rellumu, contraste y saturación.
+* **Llenzu Adaptable y Estudiu Multi-Llingüeta**: Visualización y edición d'imáxenes con caché multinivel ya historial de Desfacer/Refacer.
+* **Revelador RAW de 16 bits**: Soporte nativu pa `.ARW`, `.CR2`, `.CR3`, `.NEF`, `.DNG`, `.RAF`, `.ORF` con curves LUT SIMD de 256 entraes (Esposición EV, Sombres, Altes Lluces, Temperatura WB, Denoise HD ensin granu y Nitidez Estructural HD).
+* **Galería de Presets Fotográficos HD**: 7 presets curaos con miniatures en direuto, deslizador d'intensidá 0–100% y creación de presets personalizaos.
+* **Asistente Intelixente de Reveláu**: Diagnósticu automáticu d'escena, Auto-Reveláu n'1 clic (`Ctrl+R`), Encuadre Intelixente 1:1 pa Instagram y Llimpiador de marques d'agua IA / C2PA.
+* **Chat IA Conversacional 100% Integráu con Qwen (`0.5B` / `1.5B`)**: Axente executáu direutamente en procesu con `llama-cpp-python` y modelos GGUF integraos (`models/qwen2.5-0.5b-instruct.gguf` y `models/qwen2.5-1.5b-instruct.gguf`) ensin precisar d'Ollama nin servicios esternos p'aplicar presets, camudar axustes o guardar presets nuevos falando en llingua natural.
+* **Tresformamientos, Dibuxu Vectorial y Desaniciu de Fondu IA**: Xirar, voltiar, recortar, anotar y desaniciar el fondu con `rembg`.
 * **Tema Escuru**: Interfaz d'usuariu moderna y llimpia.
 
 ## Captures de Pantalla

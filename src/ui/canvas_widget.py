@@ -212,16 +212,19 @@ class CanvasWidget(QWidget):
 
     def paintEvent(self, event):
         painter = QPainter(self)
-        painter.fillRect(self.rect(), QColor("#2b2b2b")) 
+        painter.fillRect(self.rect(), QColor("#141619"))
 
         if not self.qt_image or self.qt_image.isNull():
             return
 
-        # Calc Transforms
+        # Calc Transforms with subtle studio breathing margin
         canvas_size = self.size()
         img_size = self.qt_image.size()
-        scale_w = canvas_size.width() / img_size.width()
-        scale_h = canvas_size.height() / img_size.height()
+        pad = 24 if (canvas_size.width() > 160 and canvas_size.height() > 160) else 0
+        avail_w = max(1, canvas_size.width() - pad * 2)
+        avail_h = max(1, canvas_size.height() - pad * 2)
+        scale_w = avail_w / img_size.width()
+        scale_h = avail_h / img_size.height()
         base_scale = min(scale_w, scale_h)
         self.scale_factor = base_scale * self.zoom_factor
 
@@ -234,9 +237,11 @@ class CanvasWidget(QWidget):
 
         self.img_draw_rect = QRect(offset_x, offset_y, display_w, display_h)
 
-        # Draw Image
+        # Draw Image & subtle frame
         painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
         painter.drawImage(self.img_draw_rect, self.qt_image)
+        painter.setPen(QPen(QColor("#282d37"), 1))
+        painter.drawRect(self.img_draw_rect.adjusted(-1, -1, 0, 0))
 
         # Draw Shapes
         painter.setRenderHint(QPainter.RenderHint.Antialiasing)

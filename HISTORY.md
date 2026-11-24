@@ -99,7 +99,7 @@ The following is a reconstruction of the Implementation Plans and Walkthroughs g
 
 ---
 
-### 4. Preparing Project for Git (Current)
+### 4. Preparing Project for Git
 **ID:** `e24826fb-570f-44a5-b905-e70a939f1f2a`
 **Date:** 2026-01-23
 **Type:** Implementation Plan & Walkthrough
@@ -109,4 +109,20 @@ The following is a reconstruction of the Implementation Plans and Walkthroughs g
 **Plan Details:**
 -   **Files:** `LICENSE` (GPLv3), `README.md`, `CONTRIBUTING.md`, `HISTORY.md`, `.gitignore`.
 -   **Verification:** Check file existence and content correctness.
+
+---
+
+### 5. 16-bit RAW Developer, Curated Preset Studio, Smart Reveal Assistant & Qwen AI Chat
+**ID:** `2fad6cd7-ad55-461a-867c-1cb7b4b34206`
+**Date:** 2026-11-18
+**Type:** Feature Implementation & OpenSpec Standardization
+
+**Goal:** Transform Basic Image Editor into a real-time 16-bit RAW & Preset Studio with an intelligent diagnostic assistant and an embedded local Qwen (`0.5B` / `1.5B`) conversational chat agent, fully documented under OpenSpec (`openspec/`).
+
+**Plan Details:**
+-   **RAW Developer (`src/processing/raw_developer.py`)**: 16-bit `rawpy` decoding, 256-entry OpenCV SIMD LUT tone curves, soft-knee highlight recovery, edge-guided LAB Denoise HD, and structural HD sharpening.
+-   **Preset Engine (`src/processing/preset_engine.py`, `src/ui/preset_gallery_dock.py`)**: 7 curated photographic presets, live 96×64 preview gallery, 0–100% intensity blending, and dynamic custom preset registration/persistence (`~/.image_editor_custom_presets.json`).
+-   **Smart Reveal Assistant (`src/processing/reveal_assistant.py`)**: Scene classification, 1-click Auto-Develop, Saliency 1:1 Square Crop for Instagram, and AI/C2PA watermark & swirl cleaner.
+-   **Qwen Conversational Agent (`src/processing/llm_chat_agent.py`, `src/ui/assistant_dock.py`)**: 100% self-contained in-process `QThread` integration with bundled `models/qwen2.5-0.5b-instruct.gguf` and `models/qwen2.5-1.5b-instruct.gguf` via `llama-cpp-python` + deterministic NLU validation (no external services or daemons required).
+-   **OpenSpec (`openspec/`)**: Full SDD bootstrap, capability specifications (`image-editor-core`, `raw-developer`, `preset-engine`, `smart-reveal-assistant`, `qwen-chat-agent`), and Spanish Gherkin `.feature` contracts.
 
