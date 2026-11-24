@@ -13,6 +13,7 @@ from PyQt6.QtWidgets import (
     QWidget,
     QVBoxLayout,
     QHBoxLayout,
+    QGridLayout,
     QLabel,
     QPushButton,
     QFrame,
@@ -63,10 +64,9 @@ class LLMChatWorker(QThread):
 class RevealAssistantDock(QDockWidget):
     """
     Smart Assistant & 100% Embedded Qwen AI Panel:
-    - Analyzes the open photo (histogram, dynamic range, shadows/highlights, sharpness, scene type)
-    - Provides 1-click quick actions (Auto-Develop, Recommended Preset, 1:1 Crop, Clean AI Watermark)
-    - Embedded in-process Qwen Chat (0.5B / 1.5B GGUF via llama-cpp-python + NLU engine) to apply,
-      tweak, or create/save custom presets via natural language with zero external services.
+    - Compact scene summary with on-demand collapsible histogram diagnostics
+    - Calm 1-click actions (Auto-Develop CTA + subtle 2x2 quick actions)
+    - Spacious embedded in-process Qwen Chat (0.5B / 1.5B GGUF via llama-cpp-python)
     """
 
     auto_develop_requested = pyqtSignal(bool)
@@ -76,7 +76,8 @@ class RevealAssistantDock(QDockWidget):
     chat_command_executed = pyqtSignal(dict)
 
     def __init__(self, parent=None):
-        super().__init__("Asistente & Chat IA (Qwen)", parent)
+        super().__init__("💬 Asistente IA", parent)
+        self.setMinimumWidth(275)
         self.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetFloatable
             | QDockWidget.DockWidgetFeature.DockWidgetMovable
@@ -93,130 +94,173 @@ class RevealAssistantDock(QDockWidget):
 
         container = QWidget()
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(10, 10, 10, 10)
-        layout.setSpacing(6)
-        layout.setAlignment(Qt.AlignmentFlag.AlignTop)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
 
-        title = QLabel("Asistente Inteligente & Chat Qwen")
-        title.setStyleSheet("font-weight: bold; font-size: 13px; color: #ffffff;")
-        layout.addWidget(title)
-
-        # Diagnostic Card
+        # --- Compact Scene Summary Card (Collapsible Details) ---
         diag_frame = QFrame()
         diag_frame.setStyleSheet(
-            "QFrame { background-color: #22252a; border: 1px solid #353a42; border-radius: 6px; padding: 5px; }"
+            "QFrame#diagCard { background-color: #181b20; border: 1px solid #262b33; border-radius: 8px; }"
         )
+        diag_frame.setObjectName("diagCard")
         diag_layout = QVBoxLayout(diag_frame)
-        diag_layout.setContentsMargins(6, 5, 6, 5)
-        diag_layout.setSpacing(3)
+        diag_layout.setContentsMargins(10, 8, 10, 8)
+        diag_layout.setSpacing(4)
 
-        self.scene_lbl = QLabel("Escena: Sin imagen cargada")
+        top_diag_row = QHBoxLayout()
+        self.scene_lbl = QLabel("Sin imagen cargada")
         self.scene_lbl.setWordWrap(True)
-        self.scene_lbl.setStyleSheet("color: #6cb6ff; font-weight: bold; font-size: 12px; border: none;")
-        diag_layout.addWidget(self.scene_lbl)
+        self.scene_lbl.setStyleSheet("color: #e6edf3; font-weight: 600; font-size: 12px; border: none;")
+        top_diag_row.addWidget(self.scene_lbl, stretch=1)
 
-        self.metrics_lbl = QLabel("Carga una foto RAW o estándar para analizar su histograma.")
+        self.btn_toggle_details = QPushButton("Detalles ▾")
+        self.btn_toggle_details.setCheckable(True)
+        self.btn_toggle_details.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_toggle_details.setStyleSheet(
+            "QPushButton { background: transparent; color: #58a6ff; border: none; font-size: 11px; padding: 2px 4px; }"
+            "QPushButton:hover { color: #79c0ff; }"
+        )
+        self.btn_toggle_details.toggled.connect(self._toggle_details)
+        top_diag_row.addWidget(self.btn_toggle_details)
+        diag_layout.addLayout(top_diag_row)
+
+        self.summary_lbl = QLabel("Abre una foto para recibir sugerencias automáticas.")
+        self.summary_lbl.setWordWrap(True)
+        self.summary_lbl.setStyleSheet("color: #8b949e; font-size: 11px; border: none;")
+        diag_layout.addWidget(self.summary_lbl)
+
+        self.details_container = QWidget()
+        details_layout = QVBoxLayout(self.details_container)
+        details_layout.setContentsMargins(0, 6, 0, 2)
+        details_layout.setSpacing(4)
+
+        self.metrics_lbl = QLabel("")
         self.metrics_lbl.setWordWrap(True)
-        self.metrics_lbl.setStyleSheet("color: #cccccc; font-size: 11px; border: none;")
-        diag_layout.addWidget(self.metrics_lbl)
+        self.metrics_lbl.setStyleSheet("color: #b1bac4; font-size: 11px; border: none;")
+        details_layout.addWidget(self.metrics_lbl)
 
         self.tips_lbl = QLabel("")
         self.tips_lbl.setWordWrap(True)
-        self.tips_lbl.setStyleSheet("color: #a8d5a2; font-size: 11px; border: none;")
-        diag_layout.addWidget(self.tips_lbl)
+        self.tips_lbl.setStyleSheet("color: #7ee787; font-size: 11px; border: none;")
+        details_layout.addWidget(self.tips_lbl)
 
+        self.details_container.setVisible(False)
+        diag_layout.addWidget(self.details_container)
         layout.addWidget(diag_frame)
 
-        # Action Buttons
-        self.btn_auto_reveal = QPushButton("✨ Auto-Revelar Foto (Óptimo)")
+        # --- Primary Action + Subtle 2x2 Quick Tools ---
+        self.btn_auto_reveal = QPushButton("✨ Auto-Revelar Foto")
+        self.btn_auto_reveal.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_auto_reveal.setToolTip(
             "Ajusta automáticamente Exposición (EV), Sombras, Altas Luces, Denoise HD, Nitidez y el Preset ideal."
         )
         self.btn_auto_reveal.setStyleSheet(
-            "QPushButton { background-color: #1f883d; font-weight: bold; padding: 6px; }"
-            "QPushButton:hover { background-color: #26a148; }"
+            "QPushButton { background-color: #238636; color: #ffffff; font-weight: 600; "
+            "font-size: 12px; padding: 8px 12px; border-radius: 6px; border: 1px solid #2ea043; }"
+            "QPushButton:hover { background-color: #2ea043; }"
         )
         self.btn_auto_reveal.clicked.connect(lambda: self.auto_develop_requested.emit(True))
         layout.addWidget(self.btn_auto_reveal)
 
-        self.btn_auto_base_only = QPushButton("☀️ Auto-Exposición y Luz (Sin Preset)")
-        self.btn_auto_base_only.setToolTip(
-            "Corrige únicamente Exposición, Sombras, Altas Luces y Nitidez manteniendo el color original."
-        )
-        self.btn_auto_base_only.clicked.connect(lambda: self.auto_develop_requested.emit(False))
-        layout.addWidget(self.btn_auto_base_only)
+        grid = QGridLayout()
+        grid.setSpacing(6)
 
-        self.btn_apply_recommended = QPushButton("🎨 Aplicar Preset Sugerido")
+        self.btn_apply_recommended = QPushButton("🎨 Preset Sugerido")
+        self.btn_apply_recommended.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_apply_recommended.setToolTip("Aplicar el preset recomendado por el análisis de escena.")
         self.btn_apply_recommended.clicked.connect(
             lambda: self.recommended_preset_requested.emit(self.recommended_preset_id)
         )
-        layout.addWidget(self.btn_apply_recommended)
+        grid.addWidget(self.btn_apply_recommended, 0, 0)
 
-        row_tools = QHBoxLayout()
-        self.btn_insta_1x1 = QPushButton("📐 Insta 1:1")
+        self.btn_auto_base_only = QPushButton("☀️ Solo Luz")
+        self.btn_auto_base_only.setCursor(Qt.CursorShape.PointingHandCursor)
+        self.btn_auto_base_only.setToolTip(
+            "Corrige Exposición, Sombras, Altas Luces y Nitidez manteniendo el color original."
+        )
+        self.btn_auto_base_only.clicked.connect(lambda: self.auto_develop_requested.emit(False))
+        grid.addWidget(self.btn_auto_base_only, 0, 1)
+
+        self.btn_insta_1x1 = QPushButton("📐 Encuadre 1:1")
+        self.btn_insta_1x1.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_insta_1x1.setToolTip(
-            "Recorta la imagen en formato cuadrado 1:1 centrando automáticamente la zona de mayor peso visual."
+            "Recorta en formato cuadrado 1:1 centrando automáticamente el sujeto principal."
         )
         self.btn_insta_1x1.clicked.connect(self.smart_crop_1x1_requested.emit)
-        row_tools.addWidget(self.btn_insta_1x1)
+        grid.addWidget(self.btn_insta_1x1, 1, 0)
 
         self.btn_clean_ai = QPushButton("🛡️ Limpiar IA")
+        self.btn_clean_ai.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_clean_ai.setToolTip(
             "Elimina patrones esteganográficos de alta frecuencia en zonas planas y limpia metadatos C2PA."
         )
         self.btn_clean_ai.clicked.connect(self.clean_ai_watermark_requested.emit)
-        row_tools.addWidget(self.btn_clean_ai)
-        layout.addLayout(row_tools)
+        grid.addWidget(self.btn_clean_ai, 1, 1)
 
-        # --- Conversational Qwen AI Chat Section ---
+        layout.addLayout(grid)
+
+        # --- Conversational Qwen AI Chat Section (Spacious) ---
         chat_header_row = QHBoxLayout()
-        chat_lbl = QLabel("💬 Chat con Qwen:")
-        chat_lbl.setStyleSheet("font-weight: bold; font-size: 12px; color: #6cb6ff;")
+        chat_lbl = QLabel("Chat Qwen IA")
+        chat_lbl.setStyleSheet("font-weight: 600; font-size: 12px; color: #8b949e;")
         chat_header_row.addWidget(chat_lbl)
+        chat_header_row.addStretch()
 
         self.model_combo = QComboBox()
-        self.model_combo.setToolTip("Selecciona el modelo Qwen GGUF integrado (100% en proceso, sin servicios externos)")
+        self.model_combo.setToolTip("Modelo Qwen GGUF integrado (100% local en proceso, auto-descargable)")
         self.model_combo.setStyleSheet(
-            "QComboBox { background: #252525; color: #ffffff; border: 1px solid #3A3939; border-radius: 4px; padding: 2px 6px; font-size: 11px; }"
+            "QComboBox { background: #181b20; color: #c9d1d9; border: 1px solid #2d333b; "
+            "border-radius: 5px; padding: 3px 8px; font-size: 11px; }"
         )
-        models = list_embedded_qwen_models()
-        for m in models:
+        for m in list_embedded_qwen_models():
             self.model_combo.addItem(m)
         chat_header_row.addWidget(self.model_combo)
         layout.addLayout(chat_header_row)
 
         self.chat_browser = QTextBrowser()
         self.chat_browser.setOpenExternalLinks(False)
-        self.chat_browser.setMinimumHeight(140)
+        self.chat_browser.setMinimumHeight(180)
         self.chat_browser.setStyleSheet(
-            "QTextBrowser { background-color: #1c1e22; color: #e6e6e6; border: 1px solid #353a42; border-radius: 6px; padding: 6px; font-size: 11px; }"
+            "QTextBrowser { background-color: #16191e; color: #d0d7de; "
+            "border: 1px solid #262b33; border-radius: 8px; padding: 10px; font-size: 12px; }"
         )
         self.chat_browser.append(
-            "<span style='color:#6cb6ff;'><b>Qwen IA:</b></span> ¡Hola! Pídeme que aplique o modifique "
-            "cualquier preset o parámetro. Ejemplos:<br>"
+            "<div style='margin-bottom:6px;'><span style='color:#58a6ff;font-weight:600;'>Qwen IA</span><br>"
+            "<span style='color:#8b949e;'>Pídeme ajustes o presets en lenguaje natural. Por ejemplo:<br>"
             "• <i>«Pon CineStill al 80% y abre las sombras»</i><br>"
-            "• <i>«Hazla más cálida, sube nitidez y guárdalo como Mi Retrato»</i>"
+            "• <i>«Más cálida, sin grano y guárdalo como Mi Retrato»</i></span></div>"
         )
         layout.addWidget(self.chat_browser, stretch=1)
 
         input_row = QHBoxLayout()
+        input_row.setSpacing(6)
         self.chat_input = QLineEdit()
-        self.chat_input.setPlaceholderText("Escribe un ajuste o preset (ej. 'más cálida y abre sombras')...")
+        self.chat_input.setPlaceholderText("Pide un ajuste o preset...")
         self.chat_input.setStyleSheet(
-            "QLineEdit { background-color: #252525; color: #ffffff; border: 1px solid #3A3939; border-radius: 4px; padding: 6px; font-size: 12px; }"
+            "QLineEdit { background-color: #16191e; color: #f0f3f6; border: 1px solid #2d333b; "
+            "border-radius: 6px; padding: 7px 10px; font-size: 12px; }"
+            "QLineEdit:focus { border: 1px solid #388bfd; }"
         )
         self.chat_input.returnPressed.connect(self.send_chat_message)
         input_row.addWidget(self.chat_input, stretch=1)
 
         self.btn_send_chat = QPushButton("Enviar")
+        self.btn_send_chat.setCursor(Qt.CursorShape.PointingHandCursor)
         self.btn_send_chat.setStyleSheet(
-            "QPushButton { background-color: #2a82da; font-weight: bold; padding: 6px 10px; }"
+            "QPushButton { background-color: #2f81f7; color: #ffffff; font-weight: 600; "
+            "padding: 7px 14px; border-radius: 6px; border: none; }"
+            "QPushButton:hover { background-color: #388bfd; }"
+            "QPushButton:disabled { background-color: #21262d; color: #8b949e; }"
         )
         self.btn_send_chat.clicked.connect(self.send_chat_message)
         input_row.addWidget(self.btn_send_chat)
         layout.addLayout(input_row)
 
         self.setWidget(container)
+
+    def _toggle_details(self, checked: bool):
+        self.details_container.setVisible(checked)
+        self.btn_toggle_details.setText("Detalles ▴" if checked else "Detalles ▾")
 
     def set_state_provider(self, provider_callable):
         """Registers a callable returning the active photo's current state dict for the LLM."""
@@ -255,7 +299,9 @@ class RevealAssistantDock(QDockWidget):
         if not isinstance(text, str):
             self.chat_input.clear()
 
-        self.chat_browser.append(f"<span style='color:#ffcf6b;'><b>Tú:</b></span> {msg}")
+        self.chat_browser.append(
+            f"<div style='margin-top:6px;'><span style='color:#d29922;font-weight:600;'>Tú:</span> {msg}</div>"
+        )
         state = self.get_current_state()
         model_name = self.model_combo.currentText() or "Qwen 2.5 0.5B (Integrado Rápido)"
 
@@ -291,37 +337,43 @@ class RevealAssistantDock(QDockWidget):
         self.btn_send_chat.setEnabled(True)
         self.btn_send_chat.setText("Enviar")
         self.chat_input.setEnabled(True)
-        self.chat_input.setPlaceholderText("Escribe un ajuste o preset (ej. 'más cálida y abre sombras')...")
+        self.chat_input.setPlaceholderText("Pide un ajuste o preset...")
         self.chat_input.setFocus()
 
         reply = result.get("reply", "Ajustes aplicados.")
         self.chat_history.append({"role": "user", "content": user_msg})
         self.chat_history.append({"role": "assistant", "content": reply})
 
-        self.chat_browser.append(f"<span style='color:#6cb6ff;'><b>Qwen IA:</b></span> {reply}")
+        self.chat_browser.append(
+            f"<div style='margin-top:4px;margin-bottom:4px;'><span style='color:#58a6ff;font-weight:600;'>Qwen IA:</span> {reply}</div>"
+        )
         self.chat_command_executed.emit(result)
 
     def update_analysis(self, analysis: dict | None):
-        """Updates the diagnostic labels and recommended preset button from `analyze_image` output."""
+        """Updates the compact summary and collapsible diagnostic labels from `analyze_image` output."""
         self.last_analysis = analysis
         if not analysis:
-            self.scene_lbl.setText("Escena: Sin imagen cargada")
-            self.metrics_lbl.setText("Carga una foto RAW o estándar para analizar su histograma.")
+            self.scene_lbl.setText("Sin imagen cargada")
+            self.summary_lbl.setText("Abre una foto para recibir sugerencias automáticas.")
+            self.metrics_lbl.setText("")
             self.tips_lbl.setText("")
+            self.btn_apply_recommended.setText("🎨 Preset Sugerido")
             return
 
         self.recommended_preset_id = analysis["recommended_preset"]
         rec_meta = get_preset_metadata(self.recommended_preset_id)
         alt_meta = get_preset_metadata(analysis["alternative_preset"])
 
-        self.scene_lbl.setText(f"Escena: {analysis['scene_type']}")
+        self.scene_lbl.setText(analysis["scene_type"])
+        self.summary_lbl.setText(
+            f"{analysis['exposure_status']} · Sugerido: {rec_meta['name']}"
+        )
         self.metrics_lbl.setText(
-            f"• Exposición: {analysis['exposure_status']} (Luma media: {analysis['mean_luma']:.2f})\n"
+            f"• Luma media: {analysis['mean_luma']:.2f} | Rango dinámico: {analysis['dynamic_range']:.2f}\n"
             f"• Sombras: {int(analysis['shadow_ratio'] * 100)}% | Altas luces: {int(analysis['highlight_ratio'] * 100)}%\n"
-            f"• Rango dinámico: {analysis['dynamic_range']:.2f} | Nitidez: {analysis['sharpness_score']:.0f}\n"
-            f"• Formato: {analysis['width']}×{analysis['height']} {'(1:1 Cuadrado)' if analysis['is_square'] else ''}\n"
-            f"• Sugerido: {rec_meta['name']} (Alt: {alt_meta['name']})"
+            f"• Nitidez: {analysis['sharpness_score']:.0f} | {analysis['width']}×{analysis['height']}\n"
+            f"• Alternativa: {alt_meta['name']}"
         )
         tips_html = "<br>".join(f"💡 {t}" for t in analysis.get("tips", []))
         self.tips_lbl.setText(tips_html)
-        self.btn_apply_recommended.setText(f"🎨 Aplicar Sugerido: {rec_meta['name']}")
+        self.btn_apply_recommended.setText(f"🎨 {rec_meta['name']}")

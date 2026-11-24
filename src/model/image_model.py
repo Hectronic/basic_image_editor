@@ -77,8 +77,8 @@ class ImageModel:
 
         # History
         self.history = []     # List of dicts representing state
-        self.redo_stack = []  # List of dicts representing state
-        self.max_history = 20
+        self.redo_stack = []  # List of dicts representing state (LIFO of undone future states)
+        self.max_history = 30
 
     def _invalidate_caches(self):
         self._cached_base_img_id = None
@@ -238,6 +238,66 @@ class ImageModel:
 
         self.redo_stack.clear()
 
+    @property
+    def current_history_index(self) -> int:
+        """Index of the currently active state within `get_history_timeline()`."""
+        return len(self.history) - 1
+
+    def get_history_timeline(self) -> list[dict]:
+        """
+        Returns the full chronological history timeline:
+        active past/current states (`self.history`) followed by undone future states
+        (`reversed(self.redo_stack)`).
+        """
+        return list(self.history) + list(reversed(self.redo_stack))
+
+    def jump_to_history(self, index: int) -> bool:
+        """
+        Restores the image, sliders, preset, and vector shapes to the exact history
+        point at `index` in `get_history_timeline()`, preserving both earlier and
+        later states so the user can move freely back and forth across the timeline.
+        """
+        timeline = self.get_history_timeline()
+        if not timeline or index < 0 or index >= len(timeline):
+            return False
+
+        self.history = timeline[: index + 1]
+        self.redo_stack = list(reversed(timeline[index + 1 :]))
+        self._restore_state(self.history[-1])
+        return True
+
+    def _state_matches_current(self, state: dict) -> bool:
+        """Checks whether `state` already matches all current image/adjustment parameters."""
+        if state.get("image") is not self.original_image:
+            return False
+        if (
+            abs(self.brightness - state.get("brightness", 1.0)) > 1e-4
+            or abs(self.contrast - state.get("contrast", 1.0)) > 1e-4
+            or abs(self.saturation - state.get("saturation", 1.0)) > 1e-4
+            or abs(self.ev - state.get("ev", 0.0)) > 1e-4
+            or abs(self.shadows - state.get("shadows", 0.0)) > 1e-4
+            or abs(self.highlights - state.get("highlights", 0.0)) > 1e-4
+            or abs(self.wb_temp - state.get("wb_temp", 0.0)) > 1e-4
+            or abs(self.wb_tint - state.get("wb_tint", 0.0)) > 1e-4
+            or abs(self.denoise - state.get("denoise", 0.0)) > 1e-4
+            or abs(self.sharpen - state.get("sharpen", 0.0)) > 1e-4
+            or self.active_preset != state.get("active_preset", "none")
+            or abs(self.preset_intensity - state.get("preset_intensity", 1.0)) > 1e-4
+        ):
+            return False
+        if len(self.shapes) != len(state.get("shapes", [])):
+            return False
+        return True
+
+    def commit_state_if_changed(self, description: str = "Adjustments") -> bool:
+        """Pushes a new history state only if the current parameters differ from the active history entry."""
+        if not self.original_image:
+            return False
+        if self.history and self._state_matches_current(self.history[-1]):
+            return False
+        self.push_state(description)
+        return True
+
     def undo(self):
         if len(self.history) > 1:
             current_state = self.history.pop()
@@ -371,13 +431,13 @@ class ImageModel:
             self.push_state(f"Preset: {meta['name']}")
 
     def commit_adjustments(self, description="Adjustments"):
-        """Call this when slider is released to save state."""
-        pass
+        """Commits current slider/preset adjustments to history if modified."""
+        return self.commit_state_if_changed(description)
 
     def reset_adjustments(self):
-        self.push_state("Reset Adjustments")
         self._reset_parameters()
         self._update_display_image()
+        self.push_state("Reset Adjustments")
 
     def _has_reveal_params(self) -> bool:
         return (

@@ -19,7 +19,7 @@ from PyQt6.QtWidgets import (
     QSlider,
     QAbstractItemView,
 )
-from PyQt6.QtCore import Qt, pyqtSignal, QSize
+from PyQt6.QtCore import Qt, pyqtSignal, QSize, QTimer
 from PyQt6.QtGui import QIcon, QImage, QPixmap
 import numpy as np
 
@@ -35,11 +35,13 @@ class PresetGalleryDock(QDockWidget):
     and a continuous intensity slider (0% - 100%).
     """
 
-    preset_selected = pyqtSignal(str, float)     # (preset_id, intensity)
-    intensity_changed = pyqtSignal(str, float)   # (preset_id, intensity)
+    preset_selected = pyqtSignal(str, float)      # (preset_id, intensity)
+    intensity_changed = pyqtSignal(str, float)    # (preset_id, intensity)
+    intensity_committed = pyqtSignal(str, float)  # (preset_id, intensity)
 
     def __init__(self, parent=None):
-        super().__init__("Galería de Presets", parent)
+        super().__init__("🎨 Presets", parent)
+        self.setMinimumWidth(260)
         self.setFeatures(
             QDockWidget.DockWidgetFeature.DockWidgetFloatable
             | QDockWidget.DockWidgetFeature.DockWidgetMovable
@@ -52,19 +54,28 @@ class PresetGalleryDock(QDockWidget):
         self._updating_ui = False
         self._last_thumb_img_id = None
 
+        self._commit_timer = QTimer(self)
+        self._commit_timer.setSingleShot(True)
+        self._commit_timer.setInterval(350)
+        self._commit_timer.timeout.connect(self._emit_intensity_committed)
+
         container = QWidget()
         layout = QVBoxLayout(container)
-        layout.setContentsMargins(8, 8, 8, 8)
-        layout.setSpacing(8)
+        layout.setContentsMargins(14, 14, 14, 14)
+        layout.setSpacing(10)
 
-        header = QLabel("Presets de Revelado HD")
-        header.setStyleSheet("font-weight: bold; font-size: 13px; color: #ffffff;")
-        layout.addWidget(header)
-
-        # Intensity Slider
+        # Intensity Control Header
         int_row = QHBoxLayout()
-        self.intensity_lbl = QLabel("Intensidad: 100%")
-        self.intensity_lbl.setStyleSheet("color: #cccccc; font-size: 12px;")
+        int_title = QLabel("Intensidad del preset")
+        int_title.setStyleSheet("color: #8b949e; font-size: 12px; font-weight: 500;")
+        int_row.addWidget(int_title)
+        int_row.addStretch()
+
+        self.intensity_lbl = QLabel("100%")
+        self.intensity_lbl.setStyleSheet(
+            "color: #e6edf3; font-size: 12px; font-weight: 600; "
+            "background: #262c36; padding: 2px 8px; border-radius: 4px;"
+        )
         int_row.addWidget(self.intensity_lbl)
         layout.addLayout(int_row)
 
@@ -72,43 +83,49 @@ class PresetGalleryDock(QDockWidget):
         self.intensity_slider.setRange(0, 100)
         self.intensity_slider.setValue(100)
         self.intensity_slider.valueChanged.connect(self._on_intensity_changed)
+        self.intensity_slider.sliderReleased.connect(self._on_intensity_released)
         layout.addWidget(self.intensity_slider)
 
         # Preset List with Live Thumbnails
         self.list_widget = QListWidget()
-        self.list_widget.setIconSize(QSize(96, 64))
+        self.list_widget.setIconSize(QSize(88, 58))
         self.list_widget.setSelectionMode(QAbstractItemView.SelectionMode.SingleSelection)
-        self.list_widget.setSpacing(4)
+        self.list_widget.setSpacing(6)
+        self.list_widget.setVerticalScrollMode(QAbstractItemView.ScrollMode.ScrollPerPixel)
         self.list_widget.setStyleSheet(
             """
             QListWidget {
-                background-color: #202020;
-                border: 1px solid #3A3939;
-                border-radius: 6px;
+                background-color: transparent;
+                border: none;
+                outline: none;
             }
             QListWidget::item {
-                padding: 6px;
-                color: #e0e0e0;
-                border-bottom: 1px solid #2d2d2d;
-            }
-            QListWidget::item:selected {
-                background-color: #2a82da;
-                color: #ffffff;
-                border-radius: 4px;
+                padding: 8px 10px;
+                color: #c9d1d9;
+                background-color: #181b20;
+                border: 1px solid #262b33;
+                border-radius: 8px;
             }
             QListWidget::item:hover {
-                background-color: #303030;
+                background-color: #21262d;
+                border: 1px solid #353c47;
+            }
+            QListWidget::item:selected {
+                background-color: #1f2d3d;
+                color: #ffffff;
+                border: 1px solid #388bfd;
             }
             """
         )
         self.list_widget.currentItemChanged.connect(self._on_item_changed)
-        layout.addWidget(self.list_widget)
+        layout.addWidget(self.list_widget, stretch=1)
 
-        # Active preset description box
-        self.desc_label = QLabel("Selecciona un preset para aplicar su estética.")
+        # Active preset description box (calm, minimal)
+        self.desc_label = QLabel("Selecciona un preset para previsualizar su estética.")
         self.desc_label.setWordWrap(True)
         self.desc_label.setStyleSheet(
-            "color: #aaaaaa; font-size: 11px; background: #252525; padding: 6px; border-radius: 4px;"
+            "color: #8b949e; font-size: 11px; background: #181b20; "
+            "border: 1px solid #262b33; padding: 8px 10px; border-radius: 6px;"
         )
         layout.addWidget(self.desc_label)
 
@@ -118,12 +135,12 @@ class PresetGalleryDock(QDockWidget):
     def _populate_default_items(self):
         self._updating_ui = True
         self.list_widget.clear()
-        placeholder = np.full((64, 96, 3), 60, dtype=np.uint8)
-        qimg = QImage(placeholder.data, 96, 64, 96 * 3, QImage.Format.Format_RGB888)
+        placeholder = np.full((58, 88, 3), 42, dtype=np.uint8)
+        qimg = QImage(placeholder.data, 88, 58, 88 * 3, QImage.Format.Format_RGB888)
         default_icon = QIcon(QPixmap.fromImage(qimg.copy()))
 
         for preset_id, meta in PRESET_DEFINITIONS.items():
-            title = f"{meta['name']}\n[{meta['badge']}] · {meta['category']}"
+            title = f"{meta['name']}\n{meta['category']}"
             item = QListWidgetItem(default_icon, title)
             item.setData(Qt.ItemDataRole.UserRole, preset_id)
             item.setToolTip(f"{meta['description']}\nIdeal para: {', '.join(meta['best_for'])}")
@@ -140,7 +157,7 @@ class PresetGalleryDock(QDockWidget):
             self.update_thumbnails(base_rgb_float)
 
     def update_thumbnails(self, base_rgb_float: np.ndarray | None):
-        """Renders live preview thumbnails for every preset using a single 96x64 downsample."""
+        """Renders live preview thumbnails for every preset using a single 88x58 downsample."""
         if base_rgb_float is None:
             return
         img_id = id(base_rgb_float)
@@ -149,11 +166,11 @@ class PresetGalleryDock(QDockWidget):
         self._last_thumb_img_id = img_id
 
         import cv2
-        small_f = cv2.resize(base_rgb_float, (96, 64), interpolation=cv2.INTER_AREA)
+        small_f = cv2.resize(base_rgb_float, (88, 58), interpolation=cv2.INTER_AREA)
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
             preset_id = item.data(Qt.ItemDataRole.UserRole)
-            thumb_u8 = generate_preset_thumbnail(small_f, preset_id, size=(96, 64))
+            thumb_u8 = generate_preset_thumbnail(small_f, preset_id, size=(88, 58))
             h, w, _ = thumb_u8.shape
             qimg = QImage(thumb_u8.data, w, h, w * 3, QImage.Format.Format_RGB888)
             item.setIcon(QIcon(QPixmap.fromImage(qimg.copy())))
@@ -161,10 +178,11 @@ class PresetGalleryDock(QDockWidget):
     def sync_from_model(self, preset_id: str, intensity: float):
         """Synchronizes selection and slider state from active tab's ImageModel."""
         self._updating_ui = True
+        self._commit_timer.stop()
         self.current_preset_id = preset_id
         pct = int(round(np.clip(intensity, 0.0, 1.0) * 100))
         self.intensity_slider.setValue(pct)
-        self.intensity_lbl.setText(f"Intensidad: {pct}%")
+        self.intensity_lbl.setText(f"{pct}%")
 
         for i in range(self.list_widget.count()):
             item = self.list_widget.item(i)
@@ -173,7 +191,7 @@ class PresetGalleryDock(QDockWidget):
                 meta = PRESET_DEFINITIONS.get(preset_id)
                 if meta:
                     self.desc_label.setText(
-                        f"<b>{meta['name']}</b>: {meta['description']}"
+                        f"<span style='color:#e6edf3;font-weight:600;'>{meta['name']}</span> — {meta['description']}"
                     )
                 break
         self._updating_ui = False
@@ -184,13 +202,29 @@ class PresetGalleryDock(QDockWidget):
         preset_id = current.data(Qt.ItemDataRole.UserRole)
         self.current_preset_id = preset_id
         meta = PRESET_DEFINITIONS.get(preset_id, PRESET_DEFINITIONS["none"])
-        self.desc_label.setText(f"<b>{meta['name']}</b>: {meta['description']}")
+        self.desc_label.setText(
+            f"<span style='color:#e6edf3;font-weight:600;'>{meta['name']}</span> — {meta['description']}"
+        )
         intensity = self.intensity_slider.value() / 100.0
         self.preset_selected.emit(preset_id, intensity)
 
     def _on_intensity_changed(self, value: int):
-        self.intensity_lbl.setText(f"Intensidad: {value}%")
+        self.intensity_lbl.setText(f"{value}%")
         if self._updating_ui:
             return
         intensity = value / 100.0
         self.intensity_changed.emit(self.current_preset_id, intensity)
+        if not self.intensity_slider.isSliderDown():
+            self._commit_timer.start()
+
+    def _on_intensity_released(self):
+        if self._updating_ui:
+            return
+        self._commit_timer.stop()
+        self._emit_intensity_committed()
+
+    def _emit_intensity_committed(self):
+        if self._updating_ui:
+            return
+        intensity = self.intensity_slider.value() / 100.0
+        self.intensity_committed.emit(self.current_preset_id, intensity)

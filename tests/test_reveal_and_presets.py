@@ -572,3 +572,108 @@ def test_custom_presets_and_llm_chat_agent(tmp_path, synthetic_rgb_float):
     assert res_fallback["preset"] == "cinestill_800t"
     assert res_fallback["preset_intensity"] == 0.75
     assert res_fallback["model_used"] == "fallback-nlu"
+
+
+def test_interactive_history_jump_and_decluttered_ui(qtbot, tmp_path, synthetic_rgb_float):
+    img_path = tmp_path / "history_jump.png"
+    float_to_pil(synthetic_rgb_float).save(str(img_path))
+
+    window = ImageEditorApp()
+    qtbot.addWidget(window)
+    window.show()
+
+    window.create_editor_tab(str(img_path))
+    tab = window.tabs.currentWidget()
+    model = tab.model
+
+    # 1. Verify decluttered defaults (secondary toolbar, classic sliders, diagnostic details hidden)
+    assert window.draw_toolbar.isVisible() is False
+    assert window.classic_container.isVisible() is False
+    assert window.assistant_dock.details_container.isVisible() is False
+
+    # Toggling collapsible UI elements works cleanly
+    window.toggle_draw_toolbar_act.setChecked(True)
+    assert window.draw_toolbar.isVisible() is True
+    window.toggle_draw_toolbar_act.setChecked(False)
+    assert window.draw_toolbar.isVisible() is False
+
+    window.btn_toggle_classic.setChecked(True)
+    assert window.classic_container.isVisible() is True
+    window.assistant_dock.btn_toggle_details.setChecked(True)
+    assert window.assistant_dock.details_container.isVisible() is True
+
+    # 2. Build a 4-step history timeline:
+    #    [0] Load Image (80x64, preset='none', ev=0.0)
+    #    [1] Preset: CineStill 800T (80x64, preset='cinestill_800t', ev=0.0)
+    #    [2] Ajuste: Exposición (80x64, preset='cinestill_800t', ev=0.45)
+    #    [3] Smart Crop 1:1 (64x64, preset='cinestill_800t', ev=0.45)
+    orig_pixels = np.array(model.display_image).copy()
+
+    window.on_preset_selected("cinestill_800t", 0.85)
+    preset_pixels = np.array(model.display_image).copy()
+    assert not np.array_equal(orig_pixels, preset_pixels)
+
+    window.sl_ev.setValue(45)
+    window.sl_ev.sliderReleased.emit()
+    ev_pixels = np.array(model.display_image).copy()
+    assert pytest.approx(model.ev, 0.01) == 0.45
+    assert not np.array_equal(preset_pixels, ev_pixels)
+
+    window.trigger_smart_crop_1x1()
+    assert model.original_image.size == (64, 64)
+    assert len(model.get_history_timeline()) == 4
+    assert window.history_list.count() == 4
+    assert model.current_history_index == 3
+
+    # 3. Select history point [0] ("Load Image") in the UI list -> restores original image & sliders!
+    window.history_list.setCurrentRow(0)
+    assert model.current_history_index == 0
+    assert model.original_image.size == (80, 64)
+    assert model.active_preset == "none"
+    assert model.ev == 0.0
+    assert window.sl_ev.value() == 0
+    assert window.preset_dock.current_preset_id == "none"
+    assert np.array_equal(np.array(model.display_image), orig_pixels)
+    # Full timeline of 4 items remains visible in history_list so user can jump forward again
+    assert window.history_list.count() == 4
+
+    # 4. Select history point [1] ("Preset: CineStill 800T") -> restores exact preset state!
+    window.history_list.setCurrentRow(1)
+    assert model.current_history_index == 1
+    assert model.active_preset == "cinestill_800t"
+    assert pytest.approx(model.preset_intensity, 0.01) == 0.85
+    assert model.ev == 0.0
+    assert np.array_equal(np.array(model.display_image), preset_pixels)
+
+    # 5. Select history point [3] ("Smart Crop 1:1") -> jumps all the way forward!
+    window.history_list.setCurrentRow(3)
+    assert model.current_history_index == 3
+    assert model.original_image.size == (64, 64)
+    assert pytest.approx(model.ev, 0.01) == 0.45
+    assert window.sl_ev.value() == 45
+
+    # 6. Uncommitted live tweak reverted by clicking the currently active history item
+    model.set_reveal_params(ev=-0.50)
+    assert pytest.approx(model.ev, 0.01) == -0.50
+    window._on_history_item_clicked(window.history_list.item(3))
+    assert pytest.approx(model.ev, 0.01) == 0.45
+
+    # 7. Reset Adjustments stores the reset state (not the pre-reset state) and out-of-bounds jump returns False
+    window.reset_adjustments()
+    assert model.active_preset == "none"
+    assert model.ev == 0.0
+    assert model.history[-1]["active_preset"] == "none"
+    assert model.history[-1]["ev"] == 0.0
+    assert model.jump_to_history(-1) is False
+    assert model.jump_to_history(999) is False
+    assert model.commit_adjustments("No-op") is False
+
+    # 8. Preset intensity slider release commits a history entry when changed
+    prev_len = len(model.history)
+    window.on_preset_selected("kodachrome_64", 1.0)
+    assert len(model.history) == prev_len + 1
+    window.preset_dock.intensity_slider.setValue(60)
+    window.preset_dock.intensity_slider.sliderReleased.emit()
+    assert len(model.history) == prev_len + 2
+    assert pytest.approx(model.history[-1]["preset_intensity"], 0.01) == 0.60
+

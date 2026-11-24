@@ -75,8 +75,14 @@ class EditorTab(QWidget):
         self.canvas.set_zoom(self.canvas.zoom_factor * factor)
 
     def slider_pressed(self):
-        self.model.push_state("Adjustment")
-        self.history_updated.emit()
+        """Pre-drag hook (state is committed cleanly upon slider release/debounce)."""
+        pass
+
+    def commit_slider_change(self, description: str = "Ajuste de Revelado") -> bool:
+        if self.model.commit_state_if_changed(description):
+            self.history_updated.emit()
+            return True
+        return False
 
     def set_adjustments(self, b, c, s):
         self.model.set_adjustments(b, c, s)
@@ -145,6 +151,14 @@ class EditorTab(QWidget):
 
     def redo(self):
         res = self.model.redo()
+        if res:
+            self.update_canvas()
+            self.canvas.set_shapes_ref(self.model.shapes)
+            self.history_updated.emit()
+        return res
+
+    def jump_to_history(self, index: int) -> bool:
+        res = self.model.jump_to_history(index)
         if res:
             self.update_canvas()
             self.canvas.set_shapes_ref(self.model.shapes)
